@@ -1,0 +1,7 @@
+# Replace lodgeos.example.com with YOUR domain (an A record pointing to the VPS IP).
+# Caddy fetches and renews a free Let's Encrypt TLS cert automatically — nothing else to do.
+
+lodgeos.example.com {
+    encode gzip
+    reverse_proxy dashboard:8000
+}
