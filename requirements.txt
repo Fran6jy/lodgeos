@@ -1,0 +1,23 @@
+# Core LLM
+anthropic>=0.40.0
+
+# Voice transcription (local mode — WHISPER_MODE=local). Optional:
+# only needed if you send voice notes and don't use WHISPER_MODE=cloud.
+faster-whisper>=1.0.0
+
+# CLI (no extra deps needed — uses stdlib)
+
+# Telegram bot (Phase 2)
+python-telegram-bot>=21.0
+
+# API server (Phase 2/5)
+fastapi>=0.115.0
+uvicorn>=0.32.0
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.24.0
+
+# Optional: structured logging
+python-json-logger>=2.0.7
+matplotlib>=3.7.0

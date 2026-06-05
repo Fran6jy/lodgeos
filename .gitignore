@@ -1,0 +1,39 @@
+# Local data — contains real financial records AND dashboard access tokens. Never commit.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+
+# Secrets / local config
+.env
+.env.*
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Test / tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Whisper / model caches (large)
+.cache/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
