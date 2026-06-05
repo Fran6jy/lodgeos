@@ -1,0 +1,46 @@
+# LodgeOS deployment: bot (outbound only) + dashboard (behind Caddy HTTPS).
+# Both share one SQLite DB on a persistent volume. SQLite WAL mode handles the
+# bot-writes / dashboard-reads concurrency.
+
+services:
+  bot:
+    build: .
+    command: python -m openclaw.integrations.telegram_bot.bot
+    env_file: .env
+    environment:
+      OPENCLAW_DB: /data/openclaw.db
+      HF_HOME: /data/hf-cache          # Whisper model cache survives restarts
+    volumes:
+      - appdata:/data
+    restart: unless-stopped
+
+  dashboard:
+    build: .
+    command: python -m openclaw.integrations.api_server.dashboard
+    env_file: .env
+    environment:
+      OPENCLAW_DB: /data/openclaw.db
+      DASHBOARD_HOST: 0.0.0.0          # reachable by Caddy inside the network
+      DASHBOARD_PORT: 8000
+    volumes:
+      - appdata:/data
+    restart: unless-stopped
+    # Note: NOT published to the host — only Caddy can reach it.
+
+  caddy:
+    image: caddy:2
+    depends_on:
+      - dashboard
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data                # Let's Encrypt certs persist here
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  appdata:
+  caddy_data:
+  caddy_config:

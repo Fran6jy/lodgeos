@@ -1,0 +1,13 @@
+.git/
+*.db
+*.db-wal
+*.db-shm
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.cache/
+.env
+Caddyfile
+docker-compose.yml
