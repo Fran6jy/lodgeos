@@ -192,6 +192,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     if action == "insights":
         text = ui.card("💡 Insights", fp.spending_insights(uid, space=fp.db.get_active_space(uid)))
+    elif action == "subs":
+        text = ui.card("🔁 Subscriptions", fp.detect_subscriptions(uid, space=fp.db.get_active_space(uid)), mono=True)
     elif action == "budget":
         text = ui.card("🎯 Budgets", fp._budget_report(uid, space=fp.db.get_active_space(uid)), mono=True)
     elif action == "income":
@@ -294,6 +296,14 @@ async def insights_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                                     parse_mode="HTML", reply_markup=ui.back_kb())
 
 
+async def subscriptions_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _, fp = _get_orchestrator()
+    uid = str(update.effective_user.id)
+    text = fp.detect_subscriptions(uid, space=fp.db.get_active_space(uid))
+    await update.message.reply_text(ui.card("🔁 Subscriptions", text, mono=True),
+                                    parse_mode="HTML", reply_markup=ui.back_kb())
+
+
 async def spaces_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show Budget Spaces and let the user switch the active one."""
     _, fp = _get_orchestrator()
@@ -364,8 +374,8 @@ async def _handle_text(update: Update, text: str) -> None:
 
     # Questions aren't transactions — answer them from the ledger (Financial Memory).
     if _looks_like_question(text):
-        _, fp = _get_orchestrator()
-        answer = fp.answer_question(text, user_id, space=fp.db.get_active_space(user_id))
+        orch, fp = _get_orchestrator()
+        answer = orch.answer(text, user_id, space=fp.db.get_active_space(user_id))
         await update.message.reply_text(ui.card("💬 Answer", answer),
                                         parse_mode="HTML", reply_markup=ui.back_kb())
         return
@@ -528,6 +538,7 @@ def main():
     app.add_handler(CommandHandler("spaces", spaces_handler))
     app.add_handler(CommandHandler("space", space_set_handler))
     app.add_handler(CommandHandler("insights", insights_handler))
+    app.add_handler(CommandHandler("subscriptions", subscriptions_handler))
     app.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^menu\|"))
     app.add_handler(CallbackQueryHandler(space_callback, pattern=r"^space\|"))
     app.add_handler(CallbackQueryHandler(category_callback, pattern=r"^cat\|"))
