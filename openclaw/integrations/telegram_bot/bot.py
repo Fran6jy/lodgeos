@@ -362,12 +362,12 @@ async def _handle_text(update: Update, text: str) -> None:
     """Shared pipeline for text (typed or transcribed): guard, process, reply."""
     user_id = str(update.effective_user.id)
 
-    # Don't record questions as transactions — answer or guide instead.
+    # Questions aren't transactions — answer them from the ledger (Financial Memory).
     if _looks_like_question(text):
-        await update.message.reply_text(
-            "That looks like a question — I record transactions, I don't answer queries yet.\n"
-            "Try: /summary, /budget, or /income for your numbers."
-        )
+        _, fp = _get_orchestrator()
+        answer = fp.answer_question(text, user_id, space=fp.db.get_active_space(user_id))
+        await update.message.reply_text(ui.card("💬 Answer", answer),
+                                        parse_mode="HTML", reply_markup=ui.back_kb())
         return
 
     await update.message.reply_text("Processing…")
