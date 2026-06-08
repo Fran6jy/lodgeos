@@ -79,6 +79,19 @@ class TestSpaceTagging:
         r = orch.process("Charity: Spent £20 on a donation")
         assert r.record["space"] == "Charity"
 
+    def test_nl_space_switch_parsing(self, db):
+        from openclaw.integrations.telegram_bot.bot import _parse_space_switch
+
+        class _FP:
+            def __init__(self, d): self.db = d
+        fp = _FP(db)
+        assert _parse_space_switch("Switch to personal space", fp, "u") == "Personal"
+        assert _parse_space_switch("switch to business", fp, "u") == "Business"
+        assert _parse_space_switch("go to property space", fp, "u") == "Property"
+        # Not a switch command -> None (records normally)
+        assert _parse_space_switch("Spent £5 on coffee", fp, "u") is None
+        assert _parse_space_switch("Business: spent £30 on ads", fp, "u") is None
+
     def test_summary_isolated_by_space(self, orch):
         orch.process("Business: Spent £30 on ads")
         orch.process("Spent £10 on coffee")  # Personal
