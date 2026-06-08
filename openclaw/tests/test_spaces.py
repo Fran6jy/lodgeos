@@ -35,6 +35,16 @@ class TestStorageSpaces:
         assert "Personal" in db.list_spaces("u")
         assert "Business" in db.list_spaces("u")
 
+    def test_budgets_are_per_space(self, db):
+        # Same category, different budget per space — must not collide.
+        db.upsert_budget("u", "Food & Drink", 50, "monthly", space="Personal")
+        db.upsert_budget("u", "Food & Drink", 200, "monthly", space="Business")
+        personal = db.get_budgets("u", "monthly", space="Personal")
+        business = db.get_budgets("u", "monthly", space="Business")
+        assert personal[0]["amount"] == 50
+        assert business[0]["amount"] == 200
+        assert len(db.get_budgets("u", "monthly")) == 2   # both, unscoped
+
 
 class TestSpaceTagging:
     def test_prefix_sets_space(self, orch):

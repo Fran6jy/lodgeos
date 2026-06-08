@@ -47,12 +47,13 @@ CREATE INDEX IF NOT EXISTS idx_records_user      ON records(user_id);
 CREATE TABLE IF NOT EXISTS budgets (
     id          TEXT PRIMARY KEY,
     user_id     TEXT NOT NULL,
+    space       TEXT DEFAULT 'Personal',
     category    TEXT NOT NULL,
     amount      REAL NOT NULL,
     currency    TEXT DEFAULT 'GBP',
     period      TEXT NOT NULL,          -- 'weekly' | 'monthly'
     created_at  TEXT NOT NULL,
-    UNIQUE(user_id, category, period)
+    UNIQUE(user_id, space, category, period)
 );
 
 CREATE TABLE IF NOT EXISTS dashboard_tokens (
@@ -98,6 +99,24 @@ class SQLiteAdapter:
             conn.execute("ALTER TABLE records ADD COLUMN voided INTEGER DEFAULT 0")
         if "space" not in existing:
             conn.execute("ALTER TABLE records ADD COLUMN space TEXT DEFAULT 'Personal'")
+
+        # Budgets gained a `space` column + a wider UNIQUE(user_id, space, category,
+        # period). The old UNIQUE can't be altered in place, so rebuild the table.
+        bcols = {row["name"] for row in conn.execute("PRAGMA table_info(budgets)")}
+        if bcols and "space" not in bcols:
+            conn.execute("ALTER TABLE budgets RENAME TO budgets_old")
+            conn.execute(
+                """CREATE TABLE budgets (
+                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, space TEXT DEFAULT 'Personal',
+                    category TEXT NOT NULL, amount REAL NOT NULL, currency TEXT DEFAULT 'GBP',
+                    period TEXT NOT NULL, created_at TEXT NOT NULL,
+                    UNIQUE(user_id, space, category, period))"""
+            )
+            conn.execute(
+                "INSERT INTO budgets (id, user_id, space, category, amount, currency, period, created_at) "
+                "SELECT id, user_id, 'Personal', category, amount, currency, period, created_at FROM budgets_old"
+            )
+            conn.execute("DROP TABLE budgets_old")
 
     @contextmanager
     def _conn(self):
@@ -350,23 +369,29 @@ class SQLiteAdapter:
         amount: float,
         period: str,
         currency: str = "GBP",
+        space: str = "Personal",
     ) -> None:
         now = datetime.now().isoformat()
         with self._conn() as conn:
             conn.execute(
                 """
-                INSERT INTO budgets (id, user_id, category, amount, currency, period, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(user_id, category, period) DO UPDATE SET amount=excluded.amount
+                INSERT INTO budgets (id, user_id, space, category, amount, currency, period, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, space, category, period) DO UPDATE SET amount=excluded.amount
                 """,
-                (str(uuid.uuid4()), user_id, category, amount, currency, period, now),
+                (str(uuid.uuid4()), user_id, space, category, amount, currency, period, now),
             )
 
-    def get_budgets(self, user_id: str, period: str = "monthly") -> List[Dict[str, Any]]:
+    def get_budgets(self, user_id: str, period: str = "monthly",
+                    space: Optional[str] = None) -> List[Dict[str, Any]]:
+        clauses = ["user_id = ?", "period = ?"]
+        params: List[Any] = [user_id, period]
+        if space:
+            clauses.append("COALESCE(space, 'Personal') = ?")
+            params.append(space)
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT * FROM budgets WHERE user_id = ? AND period = ?",
-                (user_id, period),
+                f"SELECT * FROM budgets WHERE {' AND '.join(clauses)}", params,
             ).fetchall()
         return [dict(r) for r in rows]
 
