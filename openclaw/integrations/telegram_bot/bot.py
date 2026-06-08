@@ -97,9 +97,31 @@ from openclaw.integrations.telegram_bot import ui
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     name = update.effective_user.first_name if update.effective_user else ""
+    _, fp = _get_orchestrator()
+    uid = str(update.effective_user.id)
+    # First-run interactive tour: only for genuinely new users (no records yet).
+    if not fp.db.get_tutorial_done(uid) and not fp.db.query_records(domain="finance", user_id=uid, limit=1):
+        text, kb = ui.tutorial(0)
+        await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
+        return
     await update.message.reply_text(
         ui.welcome(name), parse_mode="HTML", reply_markup=ui.main_menu_kb()
     )
+
+
+async def tutorial_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Advance or finish the first-run tour."""
+    q = update.callback_query
+    await q.answer()
+    arg = q.data.split("|", 1)[1]
+    _, fp = _get_orchestrator()
+    if arg == "done":
+        fp.db.set_tutorial_done(str(q.from_user.id))
+        name = q.from_user.first_name or ""
+        await q.edit_message_text(ui.welcome(name), parse_mode="HTML", reply_markup=ui.main_menu_kb())
+        return
+    text, kb = ui.tutorial(int(arg))
+    await q.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
 
 
 async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -569,6 +591,7 @@ def main():
     app.add_handler(CommandHandler("space", space_set_handler))
     app.add_handler(CommandHandler("insights", insights_handler))
     app.add_handler(CommandHandler("subscriptions", subscriptions_handler))
+    app.add_handler(CallbackQueryHandler(tutorial_callback, pattern=r"^tut\|"))
     app.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^menu\|"))
     app.add_handler(CallbackQueryHandler(space_callback, pattern=r"^space\|"))
     app.add_handler(CallbackQueryHandler(category_callback, pattern=r"^cat\|"))

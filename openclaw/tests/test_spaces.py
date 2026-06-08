@@ -31,6 +31,21 @@ class TestStorageSpaces:
         db.set_active_space("u", "Business")
         assert db.get_active_space("u") == "Business"
 
+    def test_tutorial_flag(self, db):
+        assert db.get_tutorial_done("u") is False
+        db.set_tutorial_done("u")
+        assert db.get_tutorial_done("u") is True
+        # marking the tutorial done must not disturb the active space
+        assert db.get_active_space("u") == "Personal"
+
+    def test_tutorial_steps_render(self):
+        from openclaw.integrations.telegram_bot import ui
+        for i in range(4):
+            text, kb = ui.tutorial(i)
+            assert text and kb.inline_keyboard
+        # out-of-range clamps, doesn't crash
+        assert ui.tutorial(99)[0]
+
     def test_list_spaces_includes_defaults(self, db):
         assert "Personal" in db.list_spaces("u")
         assert "Business" in db.list_spaces("u")
