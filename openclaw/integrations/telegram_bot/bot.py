@@ -191,7 +191,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     if action == "budget":
-        text = ui.card("🎯 Budgets", fp._budget_report(uid), mono=True)
+        text = ui.card("🎯 Budgets", fp._budget_report(uid, space=fp.db.get_active_space(uid)), mono=True)
     elif action == "income":
         text = ui.card("💰 Income", fp._income_summary(uid, space=fp.db.get_active_space(uid)), mono=True)
     elif action == "dashboard":
@@ -257,7 +257,8 @@ async def month_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _, fp = _get_orchestrator()
-    text = fp._budget_report(user_id=str(update.effective_user.id))
+    uid = str(update.effective_user.id)
+    text = fp._budget_report(user_id=uid, space=fp.db.get_active_space(uid))
     await update.message.reply_text(ui.card("🎯 Budgets", text, mono=True),
                                     parse_mode="HTML", reply_markup=ui.back_kb())
 
@@ -333,7 +334,8 @@ async def setbudget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await update.message.reply_text("Amount must be a number, e.g. /setbudget Transport 150")
         return
     category = " ".join(args[:-1]).title()
-    text = fp.set_budget(category, amount, "monthly", user_id=str(update.effective_user.id))
+    uid = str(update.effective_user.id)
+    text = fp.set_budget(category, amount, "monthly", user_id=uid, space=fp.db.get_active_space(uid))
     await update.message.reply_text(text)
 
 

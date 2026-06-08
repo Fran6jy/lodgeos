@@ -236,9 +236,9 @@ class FinancePlugin(BasePlugin):
             if category:
                 lines.append(f"   Category: {category}")
 
-            # Budget remaining
+            # Budget remaining (scoped to this record's Space)
             if memory and amount:
-                budget_info = self._budget_remaining(category, amount, memory)
+                budget_info = self._budget_remaining(category, amount, memory, space=space)
                 if budget_info:
                     lines.append(f"   {budget_info}")
 
@@ -264,23 +264,26 @@ class FinancePlugin(BasePlugin):
     # Budget management
     # -------------------------------------------------------------------------
 
-    def set_budget(self, category: str, amount: float, period: str = "monthly", user_id: Optional[str] = None) -> str:
+    def set_budget(self, category: str, amount: float, period: str = "monthly",
+                   user_id: Optional[str] = None, space: str = "Personal") -> str:
         uid = user_id or self.default_user
-        self.db.upsert_budget(uid, category, amount, period)
-        return f"Budget set: {category} — {format_amount(amount)} per {period}"
+        self.db.upsert_budget(uid, category, amount, period, space=space)
+        scope = f" [{space}]" if space != "Personal" else ""
+        return f"Budget set{scope}: {category} — {format_amount(amount)} per {period}"
 
-    def _budget_remaining(self, category: str, new_spend: float, memory) -> Optional[str]:
-        """Return budget remaining string if a budget is set for this category."""
+    def _budget_remaining(self, category: str, new_spend: float, memory,
+                          space: str = "Personal") -> Optional[str]:
+        """Return budget remaining string if a budget is set for this category/space."""
         try:
             uid = self.default_user
-            budgets = self.db.get_budgets(uid, "monthly")
+            budgets = self.db.get_budgets(uid, "monthly", space=space)
             for b in budgets:
                 if b["category"].lower() == category.lower():
                     s, e = current_month_range()
                     spent = self.db.sum_amount(
                         domain="finance", record_type="expense",
                         user_id=uid, since=s.isoformat(), until=e.isoformat(),
-                        category=category,
+                        category=category, space=space,
                     )
                     remaining = b["amount"] - spent
                     if remaining < 0:
@@ -290,19 +293,21 @@ class FinancePlugin(BasePlugin):
             logger.debug("Budget check failed: %s", e)
         return None
 
-    def _budget_report(self, user_id: Optional[str] = None) -> str:
+    def _budget_report(self, user_id: Optional[str] = None, space: Optional[str] = None) -> str:
         uid = user_id or self.default_user
-        budgets = self.db.get_budgets(uid, "monthly")
+        budgets = self.db.get_budgets(uid, "monthly", space=space)
         if not budgets:
-            return "No budgets set. Use 'set budget £X for <category> monthly' to create one."
+            scope = f" for {space}" if space else ""
+            return f"No budgets set{scope}. Use /setbudget <category> <amount> to create one."
 
         s, e = current_month_range()
-        lines = ["📋 Monthly Budget Report", ""]
+        scope = f" · {space}" if space else ""
+        lines = [f"📋 Monthly Budget Report{scope}", ""]
         for b in budgets:
             spent = self.db.sum_amount(
                 domain="finance", record_type="expense",
                 user_id=uid, since=s.isoformat(), until=e.isoformat(),
-                category=b["category"],
+                category=b["category"], space=b.get("space"),
             )
             remaining = b["amount"] - spent
             pct = (spent / b["amount"] * 100) if b["amount"] > 0 else 0

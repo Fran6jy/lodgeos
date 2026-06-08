@@ -36,16 +36,16 @@ USER_ID = os.environ.get("DASHBOARD_USER", "default")
 BRAND = os.environ.get("BRAND_NAME", "LodgeOS")
 
 
-def gather_data(db: SQLiteAdapter, user_id: str) -> Dict[str, Any]:
-    """Collect this month's finance view for a single user."""
+def gather_data(db: SQLiteAdapter, user_id: str, space: str = None) -> Dict[str, Any]:
+    """Collect this month's finance view for a single user, optionally one Space."""
     now = datetime.now()
     s, e = current_month_range(now)
     since, until = s.isoformat(), e.isoformat()
 
     expenses = db.query_records(domain="finance", record_type="expense",
-                                user_id=user_id, since=since, until=until, limit=2000)
+                                user_id=user_id, since=since, until=until, limit=2000, space=space)
     income = db.query_records(domain="finance", record_type="income",
-                              user_id=user_id, since=since, until=until, limit=2000)
+                              user_id=user_id, since=since, until=until, limit=2000, space=space)
 
     total_exp = sum(r.get("amount", 0) or 0 for r in expenses)
     total_inc = sum(r.get("amount", 0) or 0 for r in income)
@@ -57,9 +57,9 @@ def gather_data(db: SQLiteAdapter, user_id: str) -> Dict[str, Any]:
     by_cat = dict(sorted(by_cat.items(), key=lambda x: -x[1]))
 
     budgets = []
-    for b in db.get_budgets(user_id, "monthly"):
+    for b in db.get_budgets(user_id, "monthly", space=space):
         spent = db.sum_amount(domain="finance", record_type="expense", user_id=user_id,
-                              since=since, until=until, category=b["category"])
+                              since=since, until=until, category=b["category"], space=b.get("space"))
         budgets.append({
             "category": b["category"], "budget": b["amount"], "spent": spent,
             "remaining": b["amount"] - spent,
@@ -67,11 +67,14 @@ def gather_data(db: SQLiteAdapter, user_id: str) -> Dict[str, Any]:
         })
 
     # Recent includes voided rows so the audit trail is visible.
-    recent = db.query_records(domain="finance", user_id=user_id, limit=25, include_voided=True)
+    recent = db.query_records(domain="finance", user_id=user_id, limit=25,
+                              include_voided=True, space=space)
 
     return {
         "user_id": user_id,
         "month": now.strftime("%B %Y"),
+        "space": space,                       # None = All spaces
+        "spaces": db.list_spaces(user_id),
         "total_expense": total_exp,
         "total_income": total_inc,
         "net": total_inc - total_exp,
@@ -81,7 +84,16 @@ def gather_data(db: SQLiteAdapter, user_id: str) -> Dict[str, Any]:
     }
 
 
-def render_html(d: Dict[str, Any]) -> str:
+def render_html(d: Dict[str, Any], link_base: str = "") -> str:
+    # Space selector chips (All + each space), linking back to this dashboard.
+    def _sep(q):
+        return ("&" if "?" in link_base else "?") + q
+    active = d.get("space")
+    chips = [f'<a class="chip {"on" if active is None else ""}" href="{link_base or "/"}">All</a>']
+    for sp in d.get("spaces", []):
+        on = "on" if sp == active else ""
+        chips.append(f'<a class="chip {on}" href="{link_base}{_sep("space=" + sp.replace(" ", "+"))}">{sp}</a>')
+    space_bar = '<div class="chips">' + "".join(chips) + "</div>"
     cat_max = max(d["by_category"].values(), default=1) or 1
     cat_rows = "".join(
         f"""<div class="row"><span class="lbl">{cat}</span>
@@ -134,9 +146,14 @@ table{{width:100%;border-collapse:collapse;font-size:13px}}
 td{{padding:6px 8px;border-bottom:1px solid #21262d}}.r{{text-align:right}}
 tr.voided td{{color:#6e7681;text-decoration:none}}tr.voided s{{color:#f85149}}
 tr.income td.r{{color:#3fb950}}
+.chips{{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 20px}}
+.chip{{padding:5px 12px;border-radius:20px;border:1px solid #30363d;background:#161b22;
+color:#c9d1d9;text-decoration:none;font-size:13px}}
+.chip.on{{background:#388bfd;border-color:#388bfd;color:#fff}}
 </style></head><body>
 <h1>{BRAND} — {d['month']}</h1>
-<p class="sub">Read-only · localhost · user <code>{d['user_id']}</code></p>
+<p class="sub">Read-only · {('Space: <b>' + d['space'] + '</b>') if d.get('space') else 'All spaces'} · user <code>{d['user_id']}</code></p>
+{space_bar}
 <div class="cards">
   <div class="card"><div class="k">Spent</div><div class="v">{format_amount(d['total_expense'])}</div></div>
   <div class="card"><div class="k">Income</div><div class="v">{format_amount(d['total_income'])}</div></div>
@@ -158,11 +175,11 @@ def create_app() -> "FastAPI":
     # multi-user deployment doesn't accidentally expose one user's data at "/".
     if os.environ.get("DASHBOARD_ROOT", "1") == "1":
         @app.get("/", response_class=HTMLResponse)
-        def index():
-            return render_html(gather_data(db, USER_ID))
+        def index(space: str = None):
+            return render_html(gather_data(db, USER_ID, space), link_base="/")
 
     @app.get("/d/{token}", response_class=HTMLResponse)
-    def user_dashboard(token: str):
+    def user_dashboard(token: str, space: str = None):
         user_id = db.resolve_dashboard_token(token)
         if not user_id:
             return HTMLResponse(
@@ -171,7 +188,7 @@ def create_app() -> "FastAPI":
                 "<p>Send <code>/dashboard</code> to the bot for a fresh link.</p></body>",
                 status_code=403,
             )
-        return render_html(gather_data(db, user_id))
+        return render_html(gather_data(db, user_id, space), link_base=f"/d/{token}")
 
     return app
 
