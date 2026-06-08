@@ -190,7 +190,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await q.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
         return
 
-    if action == "budget":
+    if action == "insights":
+        text = ui.card("💡 Insights", fp.spending_insights(uid, space=fp.db.get_active_space(uid)))
+    elif action == "budget":
         text = ui.card("🎯 Budgets", fp._budget_report(uid, space=fp.db.get_active_space(uid)), mono=True)
     elif action == "income":
         text = ui.card("💰 Income", fp._income_summary(uid, space=fp.db.get_active_space(uid)), mono=True)
@@ -282,6 +284,14 @@ async def dashboard_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     text = await _dashboard_text(fp, str(update.effective_user.id))
     await update.message.reply_text(text, parse_mode="HTML",
                                     reply_markup=ui.back_kb(), disable_web_page_preview=True)
+
+
+async def insights_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _, fp = _get_orchestrator()
+    uid = str(update.effective_user.id)
+    text = fp.spending_insights(uid, space=fp.db.get_active_space(uid))
+    await update.message.reply_text(ui.card("💡 Insights", text),
+                                    parse_mode="HTML", reply_markup=ui.back_kb())
 
 
 async def spaces_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -517,6 +527,7 @@ def main():
     app.add_handler(CommandHandler("dashboard", dashboard_handler))
     app.add_handler(CommandHandler("spaces", spaces_handler))
     app.add_handler(CommandHandler("space", space_set_handler))
+    app.add_handler(CommandHandler("insights", insights_handler))
     app.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^menu\|"))
     app.add_handler(CallbackQueryHandler(space_callback, pattern=r"^space\|"))
     app.add_handler(CallbackQueryHandler(category_callback, pattern=r"^cat\|"))

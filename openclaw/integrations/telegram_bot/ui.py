@@ -23,10 +23,10 @@ def main_menu_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🎯 Budgets", callback_data="menu|budget"),
          InlineKeyboardButton("💰 Income", callback_data="menu|income")],
         [InlineKeyboardButton("📉 Spending Chart", callback_data="menu|chart"),
-         InlineKeyboardButton("🗂 Spaces", callback_data="menu|spaces")],
-        [InlineKeyboardButton("🧾 History", callback_data="menu|history"),
-         InlineKeyboardButton("📈 Dashboard", callback_data="menu|dashboard")],
-        [InlineKeyboardButton("➕ Add entry", callback_data="menu|add"),
+         InlineKeyboardButton("💡 Insights", callback_data="menu|insights")],
+        [InlineKeyboardButton("🗂 Spaces", callback_data="menu|spaces"),
+         InlineKeyboardButton("🧾 History", callback_data="menu|history")],
+        [InlineKeyboardButton("📈 Dashboard", callback_data="menu|dashboard"),
          InlineKeyboardButton("❓ Help", callback_data="menu|help")],
     ])
 
@@ -145,6 +145,7 @@ def bot_commands() -> list:
         BotCommand("budget", "🎯 Budgets vs actual"),
         BotCommand("setbudget", "✏️ Set a monthly budget"),
         BotCommand("income", "💰 Income this month"),
+        BotCommand("insights", "💡 Spending insights vs last month"),
         BotCommand("history", "🧾 Recent transactions"),
         BotCommand("dashboard", "📈 Private web dashboard"),
         BotCommand("spaces", "🗂 Switch Budget Space"),
