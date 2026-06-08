@@ -104,28 +104,45 @@ def welcome(name: str = "") -> str:
         f"💬  <i>“Spent £4.50 at Nero for coffee”</i>\n"
         f"🎙  a voice note saying what you spent\n"
         f"🧾  a photo of a receipt or payslip\n\n"
-        f"Tap a button below, or send <code>/menu</code> anytime."
+        f"You can also <b>ask</b> — <i>“how much did I spend this month?”</i>\n\n"
+        f"Tap a button below, send <code>/menu</code>, or <code>/help</code> for the full guide."
     )
 
 
 def help_text() -> str:
-    return card("Help & Commands", (
-        "<b>Just send naturally</b> — I’ll record it:\n"
-        "• <i>Coffee at Costa £3.20</i>\n"
-        "• <i>Received invoice £500</i>\n"
-        "• <i>Actually that coffee was £6</i>  (correction)\n"
-        "• <i>Delete the £5 one</i>  (void)\n\n"
-        "<b>Ask me anything</b> about your money:\n"
+    return card("📖 How to use LodgeOS", (
+        "No apps, no forms — just talk to me. Here's everything:\n\n"
+
+        "<b>1️⃣ RECORD — tell me what happened</b>\n"
+        "Type it, say it, or snap it:\n"
+        "• <i>Spent £4.50 at Nero for coffee</i>\n"
+        "• 🎙 a voice note of what you spent\n"
+        "• 🧾 a photo of a receipt or payslip\n"
+        "I auto-categorise and confirm each one.\n\n"
+
+        "<b>2️⃣ ASK — questions about your money</b>\n"
         "• <i>How much have I spent this month?</i>\n"
-        "• <i>How much on Groceries this year?</i>\n"
-        "• <i>How much have I spent at Tesco?</i>\n\n"
-        "<b>Inputs:</b> text · 🎙 voice · 🧾 photos\n\n"
-        "<b>Commands</b>\n"
-        "/menu — open the menu\n"
+        "• <i>How much have I spent at Tesco?</i>\n"
+        "• <i>What's my biggest expense?</i>\n\n"
+
+        "<b>3️⃣ FIX — correct or undo</b>\n"
+        "• <i>Actually that coffee was £6</i>\n"
+        "• <i>Delete the £5 one</i>  (kept for audit, not lost)\n\n"
+
+        "<b>4️⃣ SPACES — keep things separate</b> 🗂\n"
+        "Split Personal / Business / Property so they don't mix:\n"
+        "• <i>switch to business space</i>\n"
+        "• or tag one entry: <i>Business: spent £30 on ads</i>\n"
+        "• new space: <code>/space Side Hustle</code>\n\n"
+
+        "<b>5️⃣ SEE — your numbers</b>\n"
         "/summary · /month — spending\n"
         "/budget · /setbudget &lt;cat&gt; &lt;amt&gt;\n"
         "/income · /history\n"
-        "/dashboard — private web view"
+        "/insights — vs last month · /subscriptions\n"
+        "/dashboard — private web view\n\n"
+
+        "💡 <b>Tip:</b> send /menu for tap-buttons — no need to remember commands."
     ))
 
 
