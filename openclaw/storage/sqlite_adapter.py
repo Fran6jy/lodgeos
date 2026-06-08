@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS records (
     data        TEXT NOT NULL,          -- full JSON record
     created_at  TEXT NOT NULL,
     updated_at  TEXT,                   -- set when a correction edits the row
-    voided      INTEGER DEFAULT 0       -- soft delete: kept for audit, excluded from totals
+    voided      INTEGER DEFAULT 0,      -- soft delete: kept for audit, excluded from totals
+    space       TEXT DEFAULT 'Personal' -- Budget Space this record belongs to
 );
 
 CREATE INDEX IF NOT EXISTS idx_records_domain    ON records(domain);
@@ -59,6 +60,17 @@ CREATE TABLE IF NOT EXISTS dashboard_tokens (
     user_id     TEXT NOT NULL,
     created_at  REAL NOT NULL,
     expires_at  REAL NOT NULL           -- epoch seconds; link dies after this
+);
+
+CREATE TABLE IF NOT EXISTS user_prefs (
+    user_id      TEXT PRIMARY KEY,
+    active_space TEXT DEFAULT 'Personal'
+);
+
+CREATE TABLE IF NOT EXISTS user_spaces (
+    user_id  TEXT NOT NULL,
+    space    TEXT NOT NULL,
+    UNIQUE(user_id, space)
 );
 """
 
@@ -84,6 +96,8 @@ class SQLiteAdapter:
             conn.execute("ALTER TABLE records ADD COLUMN updated_at TEXT")
         if "voided" not in existing:
             conn.execute("ALTER TABLE records ADD COLUMN voided INTEGER DEFAULT 0")
+        if "space" not in existing:
+            conn.execute("ALTER TABLE records ADD COLUMN space TEXT DEFAULT 'Personal'")
 
     @contextmanager
     def _conn(self):
@@ -114,8 +128,8 @@ class SQLiteAdapter:
                 """
                 INSERT INTO records
                     (id, domain, type, amount, currency, description,
-                     timestamp, user_id, confidence, data, created_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                     timestamp, user_id, confidence, data, created_at, space)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     record_id,
@@ -129,6 +143,7 @@ class SQLiteAdapter:
                     record.get("confidence", 0.5),
                     json.dumps(record),
                     now,
+                    record.get("space", "Personal"),
                 ),
             )
         logger.debug("Stored record %s (domain=%s)", record_id, record.get("domain"))
@@ -143,12 +158,16 @@ class SQLiteAdapter:
         until: Optional[str] = None,
         limit: int = 100,
         include_voided: bool = False,
+        space: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         clauses = ["user_id = ?"]
         params: List[Any] = [user_id]
 
         if not include_voided:
             clauses.append("COALESCE(voided, 0) = 0")
+        if space:
+            clauses.append("COALESCE(space, 'Personal') = ?")
+            params.append(space)
 
         if domain:
             clauses.append("domain = ?")
@@ -182,10 +201,14 @@ class SQLiteAdapter:
         since: Optional[str] = None,
         until: Optional[str] = None,
         category: Optional[str] = None,
+        space: Optional[str] = None,
     ) -> float:
         clauses = ["domain = ?", "user_id = ?", "COALESCE(voided, 0) = 0"]
         params: List[Any] = [domain, user_id]
 
+        if space:
+            clauses.append("COALESCE(space, 'Personal') = ?")
+            params.append(space)
         if record_type:
             clauses.append("type = ?")
             params.append(record_type)
@@ -376,3 +399,42 @@ class SQLiteAdapter:
         if not row or row["expires_at"] < time.time():
             return None
         return row["user_id"]
+
+    # -------------------------------------------------------------------------
+    # Budget Spaces
+    # -------------------------------------------------------------------------
+
+    DEFAULT_SPACES = ["Personal", "Business", "Property"]
+
+    def get_active_space(self, user_id: str) -> str:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT active_space FROM user_prefs WHERE user_id = ?", (user_id,)
+            ).fetchone()
+        return row["active_space"] if row and row["active_space"] else "Personal"
+
+    def set_active_space(self, user_id: str, space: str) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO user_prefs (user_id, active_space) VALUES (?, ?) "
+                "ON CONFLICT(user_id) DO UPDATE SET active_space = excluded.active_space",
+                (user_id, space),
+            )
+            # Remember the space even before it has any records.
+            conn.execute(
+                "INSERT OR IGNORE INTO user_spaces (user_id, space) VALUES (?, ?)",
+                (user_id, space),
+            )
+
+    def list_spaces(self, user_id: str) -> List[str]:
+        """Spaces this user has used or created, merged with sensible defaults."""
+        with self._conn() as conn:
+            used = [r["s"] for r in conn.execute(
+                "SELECT DISTINCT COALESCE(space, 'Personal') AS s FROM records WHERE user_id = ?",
+                (user_id,),
+            ).fetchall()]
+            created = [r["space"] for r in conn.execute(
+                "SELECT space FROM user_spaces WHERE user_id = ?", (user_id,)
+            ).fetchall()]
+        spaces = self.DEFAULT_SPACES + used + created + [self.get_active_space(user_id)]
+        return list(dict.fromkeys(spaces))

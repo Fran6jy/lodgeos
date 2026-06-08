@@ -22,7 +22,8 @@ def main_menu_kb() -> InlineKeyboardMarkup:
          InlineKeyboardButton("🗓 This Month", callback_data="menu|month")],
         [InlineKeyboardButton("🎯 Budgets", callback_data="menu|budget"),
          InlineKeyboardButton("💰 Income", callback_data="menu|income")],
-        [InlineKeyboardButton("📉 Spending Chart", callback_data="menu|chart")],
+        [InlineKeyboardButton("📉 Spending Chart", callback_data="menu|chart"),
+         InlineKeyboardButton("🗂 Spaces", callback_data="menu|spaces")],
         [InlineKeyboardButton("🧾 History", callback_data="menu|history"),
          InlineKeyboardButton("📈 Dashboard", callback_data="menu|dashboard")],
         [InlineKeyboardButton("➕ Add entry", callback_data="menu|add"),
@@ -46,6 +47,29 @@ def category_kb(categories, timeframe: str = "month") -> InlineKeyboardMarkup:
         rows.append(row)
     rows.append([InlineKeyboardButton("⬅️ Menu", callback_data="menu|home")])
     return InlineKeyboardMarkup(rows)
+
+
+def spaces_kb(spaces, active: str) -> InlineKeyboardMarkup:
+    """Switch the active Budget Space; the current one is marked."""
+    rows, row = [], []
+    for sp in spaces:
+        mark = "✅ " if sp == active else ""
+        row.append(InlineKeyboardButton(f"{mark}{sp}", callback_data=f"space|{sp}"))
+        if len(row) == 2:
+            rows.append(row); row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton("⬅️ Menu", callback_data="menu|home")])
+    return InlineKeyboardMarkup(rows)
+
+
+def spaces_card(active: str) -> str:
+    return card("🗂 Budget Spaces", (
+        f"Active space: <b>{active}</b>\n\n"
+        "Everything you log goes here. Switch below, or override per entry:\n"
+        "<i>Business: spent £30 on Facebook ads</i>\n\n"
+        "Create a new one with <code>/space &lt;name&gt;</code>."
+    ))
 
 
 def history_kb(offset: int, has_more: bool) -> InlineKeyboardMarkup:
@@ -123,6 +147,7 @@ def bot_commands() -> list:
         BotCommand("income", "💰 Income this month"),
         BotCommand("history", "🧾 Recent transactions"),
         BotCommand("dashboard", "📈 Private web dashboard"),
+        BotCommand("spaces", "🗂 Switch Budget Space"),
         BotCommand("help", "❓ How to use the bot"),
     ]
 

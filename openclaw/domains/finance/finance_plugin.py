@@ -111,7 +111,8 @@ class FinancePlugin(BasePlugin):
         # Default: this week
         return self.summarize("week", user_id=user_id)
 
-    def summarize(self, timeframe: str = "week", user_id: Optional[str] = None) -> str:
+    def summarize(self, timeframe: str = "week", user_id: Optional[str] = None,
+                  space: Optional[str] = None) -> str:
         uid = user_id or self.default_user
         now = datetime.now()
 
@@ -134,11 +135,11 @@ class FinancePlugin(BasePlugin):
 
         expenses = self.db.query_records(
             domain="finance", record_type="expense",
-            user_id=uid, since=since, until=until, limit=500,
+            user_id=uid, since=since, until=until, limit=500, space=space,
         )
         income = self.db.query_records(
             domain="finance", record_type="income",
-            user_id=uid, since=since, until=until, limit=500,
+            user_id=uid, since=since, until=until, limit=500, space=space,
         )
 
         total_exp = sum(r.get("amount", 0) or 0 for r in expenses)
@@ -150,7 +151,8 @@ class FinancePlugin(BasePlugin):
             cat = r.get("entities", {}).get("category", "Other")
             by_cat[cat] = by_cat.get(cat, 0) + (r.get("amount", 0) or 0)
 
-        lines = [f"📊 {label} Finance Summary", ""]
+        scope = f" · {space}" if space else ""
+        lines = [f"📊 {label} Finance Summary{scope}", ""]
         if total_exp > 0:
             lines.append(f"💸 Total Spent:  {format_amount(total_exp)}")
         if total_inc > 0:
@@ -177,12 +179,13 @@ class FinancePlugin(BasePlugin):
             s, e = current_month_range(now)
         return s.isoformat(), e.isoformat()
 
-    def category_breakdown(self, timeframe: str = "month", user_id: Optional[str] = None) -> Dict[str, float]:
+    def category_breakdown(self, timeframe: str = "month", user_id: Optional[str] = None,
+                           space: Optional[str] = None) -> Dict[str, float]:
         """Return {category: total_spent} for the timeframe, descending."""
         uid = user_id or self.default_user
         since, until = self._range(timeframe)
         expenses = self.db.query_records(domain="finance", record_type="expense",
-                                         user_id=uid, since=since, until=until, limit=2000)
+                                         user_id=uid, since=since, until=until, limit=2000, space=space)
         by_cat: Dict[str, float] = {}
         for r in expenses:
             cat = r.get("entities", {}).get("category", "Other")
@@ -190,12 +193,13 @@ class FinancePlugin(BasePlugin):
         return dict(sorted(by_cat.items(), key=lambda x: -x[1]))
 
     def category_transactions(self, category: str, timeframe: str = "month",
-                              user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+                              user_id: Optional[str] = None,
+                              space: Optional[str] = None) -> List[Dict[str, Any]]:
         """Return this timeframe's expense records for one category, newest first."""
         uid = user_id or self.default_user
         since, until = self._range(timeframe)
         expenses = self.db.query_records(domain="finance", record_type="expense",
-                                         user_id=uid, since=since, until=until, limit=2000)
+                                         user_id=uid, since=since, until=until, limit=2000, space=space)
         return [r for r in expenses if r.get("entities", {}).get("category", "Other") == category]
 
     # -------------------------------------------------------------------------
@@ -218,6 +222,7 @@ class FinancePlugin(BasePlugin):
         description = record.get("description", "")
         category = record.get("entities", {}).get("category", "")
         merchant = record.get("entities", {}).get("merchant", "")
+        space = record.get("space", "Personal")
         ts = record.get("timestamp", "")
 
         lines = []
@@ -244,6 +249,10 @@ class FinancePlugin(BasePlugin):
 
         else:
             lines.append(f"✅ Recorded {rtype}: {description}")
+
+        # Show the Space only when it's not the default, to avoid clutter.
+        if space and space != "Personal":
+            lines.append(f"   🗂 Space: {space}")
 
         # Confidence is only surfaced in developer mode to aid debugging.
         if dev and record.get("confidence") is not None:
@@ -306,12 +315,12 @@ class FinancePlugin(BasePlugin):
             )
         return "\n".join(lines)
 
-    def _income_summary(self, user_id: Optional[str] = None) -> str:
+    def _income_summary(self, user_id: Optional[str] = None, space: Optional[str] = None) -> str:
         uid = user_id or self.default_user
         s, e = current_month_range()
         records = self.db.query_records(
             domain="finance", record_type="income",
-            user_id=uid, since=s.isoformat(), until=e.isoformat(), limit=100,
+            user_id=uid, since=s.isoformat(), until=e.isoformat(), limit=100, space=space,
         )
         total = sum(r.get("amount", 0) or 0 for r in records)
         lines = [f"💰 Income this month: {format_amount(total)}", ""]

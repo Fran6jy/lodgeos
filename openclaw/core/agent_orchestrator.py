@@ -8,9 +8,16 @@ This is the single public interface all integrations (CLI, Telegram, API) call.
 """
 
 import logging
+import re
 import time
 from datetime import datetime
 from typing import Any, Dict, Optional
+
+# Prefixes that look like "Word:" but are NOT Budget Spaces.
+_SPACE_PREFIX_STOPLIST = {
+    "note", "reminder", "todo", "fyi", "ps", "re", "btw", "update", "fix",
+    "eg", "ie", "etc", "warning", "error", "http", "https", "nb", "memo",
+}
 
 from openclaw.core.intent_parser import IntentParser
 from openclaw.core.correction_detector import CorrectionDetector
@@ -64,6 +71,23 @@ class AgentOrchestrator:
         self.memory = memory or MemoryStore()
         self.dev = dev
 
+    def _resolve_space(self, message: str, user_id: str):
+        """Return (space, cleaned_message). A 'Space: ...' prefix overrides the
+        user's active space for this one entry — but only when the prefix matches a
+        KNOWN space (defaults + ones the user created via /space). This avoids
+        hijacking ordinary colons like 'Lunch: £12'. Otherwise the active space applies."""
+        db = self._storage()
+        active = db.get_active_space(user_id) if db else "Personal"
+        if db is None:
+            return active, message
+        m = re.match(r"^\s*([A-Za-z][A-Za-z0-9 &'\-]{0,28}?):\s+(.+)$", message, re.DOTALL)
+        if m:
+            prefix = m.group(1).strip()
+            known = {s.lower(): s for s in db.list_spaces(user_id)}
+            if prefix.lower() in known and prefix.lower() not in _SPACE_PREFIX_STOPLIST:
+                return known[prefix.lower()], m.group(2).strip()
+        return active, message
+
     def _storage(self):
         """Return a storage adapter from any registered plugin that has one."""
         for plugin in self.router._registry.values():
@@ -81,6 +105,9 @@ class AgentOrchestrator:
         start = time.perf_counter()
 
         try:
+            # Step -1: Resolve the Budget Space (prefix override or active space).
+            space, message = self._resolve_space(message, user_id)
+
             # Step 0: Is this a correction to an existing entry, or a new one?
             classification = self.corrector.classify(message, self.memory.recent(domain="finance"))
             intent = classification.get("intent", "RECORD_NEW")
@@ -103,7 +130,8 @@ class AgentOrchestrator:
             plugin, domain = self.router.route(record)
             record["domain"] = domain
 
-            # Step 4: Plugin transform + store
+            # Step 4: Plugin transform + store (tag with the resolved Space)
+            record["space"] = space
             record = plugin.transform(record)
             plugin.store(record)
 
@@ -148,6 +176,8 @@ class AgentOrchestrator:
         try:
             record = self.doc_parser.parse(image_b64, mime)
             record["user_id"] = user_id
+            db = self._storage()
+            record["space"] = db.get_active_space(user_id) if db else "Personal"
             record["processed_at"] = datetime.now().isoformat()
             record.setdefault("timestamp", datetime.now().isoformat())
 

@@ -145,13 +145,14 @@ async def _send_chart(q, fp, uid: str) -> None:
     """Render a spending donut and send it as a photo with category drill-down chips."""
     import io
     from openclaw.integrations.telegram_bot import charts
-    by_cat = fp.category_breakdown("month", uid)
-    png = charts.category_donut(by_cat, "This month")
+    space = fp.db.get_active_space(uid)
+    by_cat = fp.category_breakdown("month", uid, space=space)
+    png = charts.category_donut(by_cat, f"This month · {space}")
     cats = list(by_cat.keys())
     kb = ui.category_kb(cats, "month") if cats else ui.back_kb()
     await q.message.reply_photo(
         photo=io.BytesIO(png),
-        caption="📉 <b>Spending this month</b> — tap a category to drill in.",
+        caption=f"📉 <b>Spending this month · {space}</b> — tap a category to drill in.",
         parse_mode="HTML", reply_markup=kb,
     )
 
@@ -167,6 +168,11 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if action == "home":
         await q.edit_message_text(ui.welcome(), parse_mode="HTML", reply_markup=ui.main_menu_kb())
         return
+    if action == "spaces":
+        active = fp.db.get_active_space(uid)
+        await q.edit_message_text(ui.spaces_card(active), parse_mode="HTML",
+                                  reply_markup=ui.spaces_kb(fp.db.list_spaces(uid), active))
+        return
     if action == "chart":
         await _send_chart(q, fp, uid)
         return
@@ -176,9 +182,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     if action in ("summary", "month"):
         tf = "week" if action == "summary" else "month"
+        space = fp.db.get_active_space(uid)
         title = "📊 This Week" if tf == "week" else "🗓 This Month"
-        text = ui.card(title, fp.summarize(tf, uid), mono=True)
-        cats = list(fp.category_breakdown(tf, uid).keys())
+        text = ui.card(title, fp.summarize(tf, uid, space=space), mono=True)
+        cats = list(fp.category_breakdown(tf, uid, space=space).keys())
         kb = ui.category_kb(cats, tf) if cats else ui.back_kb()
         await q.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
         return
@@ -186,7 +193,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if action == "budget":
         text = ui.card("🎯 Budgets", fp._budget_report(uid), mono=True)
     elif action == "income":
-        text = ui.card("💰 Income", fp._income_summary(uid), mono=True)
+        text = ui.card("💰 Income", fp._income_summary(uid, space=fp.db.get_active_space(uid)), mono=True)
     elif action == "dashboard":
         text = await _dashboard_text(fp, uid)
     elif action == "add":
@@ -207,7 +214,8 @@ async def category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await q.answer()
     _, category, tf = q.data.split("|", 2)
     _, fp = _get_orchestrator()
-    txs = fp.category_transactions(category, tf, str(q.from_user.id))
+    uid = str(q.from_user.id)
+    txs = fp.category_transactions(category, tf, uid, space=fp.db.get_active_space(uid))
     if not txs:
         body = "No transactions here."
     else:
@@ -273,6 +281,40 @@ async def dashboard_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     text = await _dashboard_text(fp, str(update.effective_user.id))
     await update.message.reply_text(text, parse_mode="HTML",
                                     reply_markup=ui.back_kb(), disable_web_page_preview=True)
+
+
+async def spaces_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show Budget Spaces and let the user switch the active one."""
+    _, fp = _get_orchestrator()
+    uid = str(update.effective_user.id)
+    active = fp.db.get_active_space(uid)
+    await update.message.reply_text(ui.spaces_card(active), parse_mode="HTML",
+                                    reply_markup=ui.spaces_kb(fp.db.list_spaces(uid), active))
+
+
+async def space_set_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/space <name> — create and/or switch to a Budget Space."""
+    _, fp = _get_orchestrator()
+    uid = str(update.effective_user.id)
+    name = " ".join(context.args or []).strip().title()
+    if not name:
+        await update.message.reply_text("Usage: /space <name>   e.g. /space Side Hustle")
+        return
+    fp.db.set_active_space(uid, name)
+    await update.message.reply_text(f"🗂 Active space set to <b>{name}</b>.", parse_mode="HTML",
+                                    reply_markup=ui.back_kb())
+
+
+async def space_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Switch the active Budget Space from the inline switcher."""
+    q = update.callback_query
+    await q.answer()
+    space = q.data.split("|", 1)[1]
+    _, fp = _get_orchestrator()
+    uid = str(q.from_user.id)
+    fp.db.set_active_space(uid, space)
+    await q.edit_message_text(ui.spaces_card(space), parse_mode="HTML",
+                              reply_markup=ui.spaces_kb(fp.db.list_spaces(uid), space))
 
 
 async def setbudget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -471,7 +513,10 @@ def main():
     app.add_handler(CommandHandler("history", history_handler))
     app.add_handler(CommandHandler("setbudget", setbudget_handler))
     app.add_handler(CommandHandler("dashboard", dashboard_handler))
+    app.add_handler(CommandHandler("spaces", spaces_handler))
+    app.add_handler(CommandHandler("space", space_set_handler))
     app.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^menu\|"))
+    app.add_handler(CallbackQueryHandler(space_callback, pattern=r"^space\|"))
     app.add_handler(CallbackQueryHandler(category_callback, pattern=r"^cat\|"))
     app.add_handler(CallbackQueryHandler(history_page_callback, pattern=r"^hist\|"))
     app.add_handler(CallbackQueryHandler(correction_callback, pattern=r"^corr\|"))
