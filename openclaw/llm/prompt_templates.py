@@ -57,7 +57,8 @@ Rules:
 - Extract amounts as numbers only (no currency symbols)
 - Default currency to GBP unless specified
 - If no date/time mentioned, set timestamp to null (system will use now)
-- Category must be one of: Food & Drink, Groceries, Transport, Utilities, Shopping, Entertainment, Health, Education, Rent, Salary, Freelance, Investment, Other
+- Category must be one of: Food & Drink, Groceries, Transport, Utilities, Shopping, Entertainment, Marketing, Health, Education, Rent, Salary, Freelance, Investment, Other
+- Marketing = advertising spend (Facebook/Google/Instagram ads, ad campaigns, promotions)
 - Groceries = supermarket trips (Tesco, Sainsbury's, Asda, Lidl, Aldi, etc.); Shopping = general/casual retail (Amazon, clothes, homeware)
 - merchant: the shop, person, or entity involved
 """

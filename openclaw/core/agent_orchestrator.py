@@ -241,6 +241,13 @@ class AgentOrchestrator:
 
         updates = classification.get("updates", {}) or {}
         clean = {k: v for k, v in updates.items() if v is not None and k in ("amount", "description", "category", "currency")}
+        # If a correction changes the description but not the category, re-infer it
+        # from the new text (e.g. "I meant £30 on facebook ads" → Marketing).
+        if clean.get("description") and not clean.get("category"):
+            from openclaw.domains.finance.finance_plugin import _infer_category
+            inferred = _infer_category(clean["description"])
+            if inferred != "Other":
+                clean["category"] = inferred
         if intent == "UPDATE_EXISTING" and not clean:
             return self._result(False, None, "I detected a correction but no new value to apply.", start)
 

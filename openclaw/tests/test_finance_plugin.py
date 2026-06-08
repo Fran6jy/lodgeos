@@ -47,6 +47,11 @@ class TestCategoryInference:
         assert _infer_category("weekly shop at Tesco") == "Groceries"
         assert _infer_category("groceries from Lidl") == "Groceries"
 
+    def test_facebook_ads_is_marketing(self):
+        assert _infer_category("spent on facebook ads") == "Marketing"
+        assert _infer_category("google ads campaign") == "Marketing"
+        assert _infer_category("£30 on advertising") == "Marketing"
+
     def test_netflix_is_entertainment(self):
         assert _infer_category("Netflix subscription") == "Entertainment"
 

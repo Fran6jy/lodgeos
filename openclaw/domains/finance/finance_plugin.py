@@ -11,7 +11,7 @@ Handles:
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from openclaw.plugins.base_plugin import BasePlugin
@@ -32,6 +32,7 @@ CATEGORY_KEYWORDS = {
     "Groceries": ["tesco", "sainsbury", "asda", "waitrose", "lidl", "aldi", "morrisons", "supermarket", "groceries", "grocery"],
     "Shopping": ["amazon", "shop", "store", "clothes", "clothing", "ikea", "argos"],
     "Entertainment": ["cinema", "netflix", "spotify", "game", "ticket", "tickets", "theatre", "concert", "gym", "sport", "sports", "subscription"],
+    "Marketing": ["marketing", "advertising", "advert", "adverts", "ads", "facebook ads", "fb ads", "google ads", "instagram ads", "tiktok ads", "linkedin ads", "adwords", "sponsored", "campaign", "promotion"],
     "Health": ["doctor", "pharmacy", "medication", "dentist", "optician", "hospital", "prescription"],
     "Education": ["course", "book", "tuition", "school", "university", "training", "udemy", "study"],
     "Rent": ["rent", "landlord", "lease"],
@@ -191,6 +192,65 @@ class FinancePlugin(BasePlugin):
             cat = r.get("entities", {}).get("category", "Other")
             by_cat[cat] = by_cat.get(cat, 0) + (r.get("amount", 0) or 0)
         return dict(sorted(by_cat.items(), key=lambda x: -x[1]))
+
+    def spending_insights(self, user_id: Optional[str] = None, space: Optional[str] = None) -> str:
+        """Compare this month with last month and surface the notable movements."""
+        uid = user_id or self.default_user
+        now = datetime.now()
+
+        this_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        prev_end = this_start - timedelta(seconds=1)
+        prev_start = prev_end.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+        def _expenses(s, e):
+            return self.db.query_records(domain="finance", record_type="expense", user_id=uid,
+                                         since=s.isoformat(), until=e.isoformat(), limit=2000, space=space)
+
+        this_exp, prev_exp = _expenses(this_start, now), _expenses(prev_start, prev_end)
+        this_total = sum(r.get("amount", 0) or 0 for r in this_exp)
+        prev_total = sum(r.get("amount", 0) or 0 for r in prev_exp)
+
+        def _by_cat(rows):
+            d: Dict[str, float] = {}
+            for r in rows:
+                c = r.get("entities", {}).get("category", "Other")
+                d[c] = d.get(c, 0) + (r.get("amount", 0) or 0)
+            return d
+
+        this_cat, prev_cat = _by_cat(this_exp), _by_cat(prev_exp)
+
+        if not this_exp and not prev_exp:
+            return "No spending yet — send me an expense and I'll start spotting trends."
+
+        lines = []
+        # Headline: total vs last month.
+        if prev_total > 0:
+            pct = (this_total - prev_total) / prev_total * 100
+            arrow = "🔺" if pct >= 0 else "🔻"
+            lines.append(f"💸 Spent {format_amount(this_total)} so far — {arrow} {abs(pct):.0f}% vs last month ({format_amount(prev_total)}).")
+        else:
+            lines.append(f"💸 Spent {format_amount(this_total)} so far this month.")
+
+        # Top category this month.
+        if this_cat:
+            top, amt = max(this_cat.items(), key=lambda x: x[1])
+            share = (amt / this_total * 100) if this_total else 0
+            lines.append(f"🏆 Biggest area: {top} ({format_amount(amt)}, {share:.0f}% of spend).")
+
+        # Biggest mover vs last month.
+        movers = []
+        for cat in set(this_cat) | set(prev_cat):
+            delta = this_cat.get(cat, 0) - prev_cat.get(cat, 0)
+            movers.append((cat, delta))
+        movers.sort(key=lambda x: -abs(x[1]))
+        if movers and abs(movers[0][1]) >= 0.01:
+            cat, delta = movers[0]
+            if delta > 0:
+                lines.append(f"📈 {cat} is up {format_amount(delta)} on last month.")
+            else:
+                lines.append(f"📉 {cat} is down {format_amount(abs(delta))} on last month.")
+
+        return "\n".join(lines)
 
     def category_transactions(self, category: str, timeframe: str = "month",
                               user_id: Optional[str] = None,
