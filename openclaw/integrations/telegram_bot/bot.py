@@ -368,20 +368,50 @@ def _looks_like_question(text: str) -> bool:
     return t.endswith("?") or t.split()[0] in _QUESTION_STARTS if t else False
 
 
+_SWITCH_VERBS = ("switch", "change", "go", "move", "use", "set", "open")
+
+
+def _parse_space_switch(text: str, fp, user_id: str):
+    """Detect 'switch to <space>' style commands; return the target space or None."""
+    import re
+    t = text.strip().lower()
+    words = t.split()
+    if not words or words[0] not in _SWITCH_VERBS:
+        return None
+    if "space" not in t and words[0] != "switch":
+        return None  # require the word 'space' unless it's an explicit 'switch ...'
+    cleaned = re.sub(
+        r"\b(switch|change|go|move|use|set|open|to|into|over|my|the|active|current|space|spaces|please)\b",
+        " ", t)
+    name = " ".join(cleaned.split()).strip()
+    if not name:
+        return None
+    known = {s.lower(): s for s in fp.db.list_spaces(user_id)}
+    return known.get(name, name.title())
+
+
 async def _handle_text(update: Update, text: str) -> None:
     """Shared pipeline for text (typed or transcribed): guard, process, reply."""
     user_id = str(update.effective_user.id)
+    orch, fp = _get_orchestrator()
+
+    # Natural-language space switching ("switch to personal space").
+    target = _parse_space_switch(text, fp, user_id)
+    if target:
+        fp.db.set_active_space(user_id, target)
+        await update.message.reply_text(
+            ui.card("🗂 Space switched", f"Active space is now <b>{target}</b>.\nNew entries go here."),
+            parse_mode="HTML", reply_markup=ui.spaces_kb(fp.db.list_spaces(user_id), target))
+        return
 
     # Questions aren't transactions — answer them from the ledger (Financial Memory).
     if _looks_like_question(text):
-        orch, fp = _get_orchestrator()
         answer = orch.answer(text, user_id, space=fp.db.get_active_space(user_id))
         await update.message.reply_text(ui.card("💬 Answer", answer),
                                         parse_mode="HTML", reply_markup=ui.back_kb())
         return
 
     await update.message.reply_text("Processing…")
-    orch, _ = _get_orchestrator()
     result = orch.process(text, user_id=user_id)
 
     # Ambiguous correction → present single-tap buttons instead of asking to retype.
