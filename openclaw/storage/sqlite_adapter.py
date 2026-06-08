@@ -64,8 +64,9 @@ CREATE TABLE IF NOT EXISTS dashboard_tokens (
 );
 
 CREATE TABLE IF NOT EXISTS user_prefs (
-    user_id      TEXT PRIMARY KEY,
-    active_space TEXT DEFAULT 'Personal'
+    user_id       TEXT PRIMARY KEY,
+    active_space  TEXT DEFAULT 'Personal',
+    tutorial_done INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS user_spaces (
@@ -117,6 +118,11 @@ class SQLiteAdapter:
                 "SELECT id, user_id, 'Personal', category, amount, currency, period, created_at FROM budgets_old"
             )
             conn.execute("DROP TABLE budgets_old")
+
+        # user_prefs gained tutorial_done.
+        pcols = {row["name"] for row in conn.execute("PRAGMA table_info(user_prefs)")}
+        if pcols and "tutorial_done" not in pcols:
+            conn.execute("ALTER TABLE user_prefs ADD COLUMN tutorial_done INTEGER DEFAULT 0")
 
     @contextmanager
     def _conn(self):
@@ -449,6 +455,21 @@ class SQLiteAdapter:
             conn.execute(
                 "INSERT OR IGNORE INTO user_spaces (user_id, space) VALUES (?, ?)",
                 (user_id, space),
+            )
+
+    def get_tutorial_done(self, user_id: str) -> bool:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT tutorial_done FROM user_prefs WHERE user_id = ?", (user_id,)
+            ).fetchone()
+        return bool(row and row["tutorial_done"])
+
+    def set_tutorial_done(self, user_id: str) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO user_prefs (user_id, tutorial_done) VALUES (?, 1) "
+                "ON CONFLICT(user_id) DO UPDATE SET tutorial_done = 1",
+                (user_id,),
             )
 
     def list_spaces(self, user_id: str) -> List[str]:

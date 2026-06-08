@@ -94,6 +94,38 @@ def card(title: str, body: str = "", *, mono: bool = False) -> str:
     return f"{head}\n{body}"
 
 
+def tutorial(step: int):
+    """A short interactive first-run tour. Returns (text, keyboard)."""
+    steps = [
+        ("👋 <b>Welcome to LodgeOS!</b>\n────────────────────\n"
+         "I turn what you say into organised money records — no spreadsheets, no forms.\n\n"
+         "Take the 30-second tour?",
+         [[InlineKeyboardButton("Start tour ▶", callback_data="tut|1")],
+          [InlineKeyboardButton("Skip", callback_data="tut|done")]]),
+
+        ("<b>Step 1 of 3 · Record anything</b> 💬\n────────────────────\n"
+         "Just tell me what happened — type it, 🎙 say it, or 🧾 snap a receipt.\n\n"
+         "👉 <b>Try it now:</b> send <i>Spent £3 on coffee</i>\n"
+         "(or tap Next to keep reading)",
+         [[InlineKeyboardButton("Next ▶", callback_data="tut|2")]]),
+
+        ("<b>Step 2 of 3 · Ask anything</b> ❓\n────────────────────\n"
+         "I answer from your own records — no guessing:\n"
+         "• <i>How much have I spent this month?</i>\n"
+         "• <i>How much at Tesco?</i>",
+         [[InlineKeyboardButton("Next ▶", callback_data="tut|3")]]),
+
+        ("<b>Step 3 of 3 · Keep things separate</b> 🗂\n────────────────────\n"
+         "Personal · Business · Property — kept apart so they don't mix.\n"
+         "Say <i>switch to business space</i>, or tag one entry: <i>Business: spent £30 on ads</i>.\n\n"
+         "That's it — you're ready! 🎉",
+         [[InlineKeyboardButton("Open menu 🏠", callback_data="tut|done")]]),
+    ]
+    step = max(0, min(step, len(steps) - 1))
+    text, kb = steps[step]
+    return text, InlineKeyboardMarkup(kb)
+
+
 def welcome(name: str = "") -> str:
     hi = f" {name}" if name else ""
     return (
