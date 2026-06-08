@@ -193,6 +193,80 @@ class FinancePlugin(BasePlugin):
             by_cat[cat] = by_cat.get(cat, 0) + (r.get("amount", 0) or 0)
         return dict(sorted(by_cat.items(), key=lambda x: -x[1]))
 
+    def _detect_category(self, text: str) -> Optional[str]:
+        import re
+        for cat, kws in CATEGORY_KEYWORDS.items():
+            if cat.lower() in text:
+                return cat
+            for kw in kws:
+                if re.search(r"\b" + re.escape(kw) + r"\b", text):
+                    return cat
+        return None
+
+    def answer_question(self, question: str, user_id: Optional[str] = None,
+                        space: Optional[str] = None) -> str:
+        """Answer a natural-language question about the ledger (Financial Memory).
+
+        Handles: how much spent (timeframe), spend on a category, spend at a
+        merchant, income, and 'where does my money go'. Deterministic — no LLM."""
+        import re
+        uid = user_id or self.default_user
+        q = question.lower()
+        now = datetime.now()
+
+        # Resolve the timeframe mentioned in the question.
+        if "today" in q:
+            since, until, label = now.replace(hour=0, minute=0, second=0, microsecond=0), now, "today"
+        elif "year" in q:
+            since, until, label = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0), now, "this year"
+        elif "week" in q:
+            s, e = current_week_range(now); since, until, label = s, e, "this week"
+        elif "last month" in q:
+            this_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            until = this_start - timedelta(seconds=1)
+            since, label = until.replace(day=1, hour=0, minute=0, second=0, microsecond=0), "last month"
+        else:
+            s, e = current_month_range(now); since, until, label = s, e, "this month"
+        si, ui_ = since.isoformat(), until.isoformat()
+        scope = f" in {space}" if space else ""
+
+        # Income.
+        if any(w in q for w in ("income", "earn", "earned", "made", "revenue", "received", "paid me")):
+            total = self.db.sum_amount("finance", "income", uid, si, ui_, space=space)
+            return f"💰 You've received {format_amount(total)}{scope} {label}."
+
+        # "Where does my money go" / biggest area.
+        if any(w in q for w in ("biggest", "most", "where", "top")):
+            by = self.category_breakdown("month", uid, space=space)
+            if not by:
+                return f"No spending recorded{scope} yet."
+            top, amt = max(by.items(), key=lambda x: x[1])
+            return f"🏆 Your biggest area{scope} is {top} — {format_amount(amt)} this month."
+
+        # Spend at a specific merchant ("...at Tesco") — checked before category so
+        # 'at Tesco' answers per-merchant rather than per-category.
+        m = re.search(r"\bat\s+([a-z][a-z0-9'&\-]{1,20})", q)
+        if m and m.group(1) not in ("all", "the", "a"):
+            kw = m.group(1)
+            recs = self.db.query_records(domain="finance", record_type="expense", user_id=uid,
+                                         since=si, until=ui_, limit=5000, space=space)
+            total = sum(r.get("amount", 0) or 0 for r in recs if kw in r.get("description", "").lower())
+            return f"You've spent {format_amount(total)} at {kw.title()}{scope} {label}."
+
+        # Spend on a specific category.
+        cat = self._detect_category(q)
+        if cat:
+            total = self.db.sum_amount("finance", "expense", uid, si, ui_, category=cat, space=space)
+            return f"You've spent {format_amount(total)} on {cat}{scope} {label}."
+
+        # Default: total spend for the timeframe.
+        spent = self.db.sum_amount("finance", "expense", uid, si, ui_, space=space)
+        income = self.db.sum_amount("finance", "income", uid, si, ui_, space=space)
+        out = f"💸 You've spent {format_amount(spent)}{scope} {label}."
+        if income:
+            out += f"\n💰 Received {format_amount(income)} · net {format_amount(income - spent)}."
+        return out
+
     def spending_insights(self, user_id: Optional[str] = None, space: Optional[str] = None) -> str:
         """Compare this month with last month and surface the notable movements."""
         uid = user_id or self.default_user
