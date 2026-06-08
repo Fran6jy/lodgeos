@@ -81,6 +81,33 @@ class MockLLMClient:
         original_msg = msg_match.group(1).strip() if msg_match else ""
         msg_lower = original_msg.lower()
 
+        # Query-plan prompt (heuristic): translate a question into a plan.
+        if "query plan" in prompt_lower and "metric" in prompt_lower:
+            qm = re.search(r"Question:\s*(.+?)(?:\n|$)", prompt)
+            qq = (qm.group(1) if qm else "").strip().lower()
+            if any(w in qq for w in ["how many", "count", "number of", "times"]):
+                metric = "count"
+            elif any(w in qq for w in ["biggest", "largest", "most expensive", "priciest"]):
+                metric = "largest_expense"
+            elif "net" in qq:
+                metric = "net"
+            elif any(w in qq for w in ["income", "earned", "made", "revenue"]):
+                metric = "income_total"
+            elif any(w in qq for w in ["by category", "breakdown", "categories"]):
+                metric = "by_category"
+            else:
+                metric = "spend_total"
+            tf = ("today" if "today" in qq else "year" if "year" in qq else "week" if "week" in qq
+                  else "last_month" if "last month" in qq else "month")
+            cat = None
+            for kw, c in [("coffee", "Food & Drink"), ("grocer", "Groceries"), ("transport", "Transport"),
+                          ("fuel", "Transport"), ("ads", "Marketing"), ("rent", "Rent")]:
+                if kw in qq:
+                    cat = c
+            mm = re.search(r"\bat\s+([a-z][a-z0-9'&\-]{1,20})", qq)
+            merchant = mm.group(1) if mm and mm.group(1) not in ("all", "the", "a") else None
+            return json.dumps({"metric": metric, "timeframe": tf, "category": cat, "merchant": merchant})
+
         # Correction-classification prompt (heuristic): new vs update vs delete.
         if "RECORD_NEW" in prompt and "UPDATE_EXISTING" in prompt:
             um = re.search(r"USER INPUT:\s*(.+?)(?:\n|$)", prompt)

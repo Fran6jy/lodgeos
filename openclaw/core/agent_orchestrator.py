@@ -7,6 +7,7 @@ Flow:
 This is the single public interface all integrations (CLI, Telegram, API) call.
 """
 
+import json
 import logging
 import re
 import time
@@ -63,6 +64,7 @@ class AgentOrchestrator:
 
     def __init__(self, llm_client, router: Router, memory: Optional[MemoryStore] = None,
                  dev: bool = False, vision_client=None):
+        self.llm = llm_client
         self.parser = IntentParser(llm_client)
         self.corrector = CorrectionDetector(llm_client)
         self.doc_parser = DocumentParser(vision_client) if vision_client else None
@@ -319,6 +321,46 @@ class AgentOrchestrator:
             domain=domain, elapsed_ms=elapsed,
             error=None if success else response, pending=pending,
         )
+
+    def answer(self, question: str, user_id: str = "default", space: Optional[str] = None) -> str:
+        """Answer a NL question: deterministic patterns first, LLM query-planner fallback."""
+        plugin = self.router._registry.get("finance")
+        if plugin is None:
+            return "I can't answer that right now."
+
+        det = plugin.answer_question(question, user_id, space=space)
+        if det is not None:
+            return det
+
+        # Fallback: ask the LLM to translate the question into a query plan, then
+        # execute it deterministically so the numbers come from the ledger.
+        try:
+            from openclaw.llm.prompt_templates import QUERY_PLAN_PROMPT
+            raw = self.llm.complete(QUERY_PLAN_PROMPT.format(question=question))
+            plan = self._parse_plan(raw)
+            if plan.get("metric"):
+                return plugin.execute_query_plan(plan, user_id, space=space)
+        except Exception as e:
+            logger.warning("Query planner failed: %s", e)
+        return ("I can answer things like \"how much have I spent this month\", "
+                "\"how much at Tesco\", \"what's my biggest expense\", or \"net this year\".")
+
+    @staticmethod
+    def _parse_plan(raw: str) -> Dict[str, Any]:
+        text = (raw or "").strip()
+        if text.startswith("```"):
+            lines = text.split("\n")
+            text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            m = re.search(r"\{.*\}", text, re.DOTALL)
+            if m:
+                try:
+                    return json.loads(m.group(0))
+                except json.JSONDecodeError:
+                    pass
+        return {}
 
     def query(self, request: str, domain: Optional[str] = None) -> str:
         """

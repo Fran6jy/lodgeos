@@ -203,40 +203,68 @@ class FinancePlugin(BasePlugin):
                     return cat
         return None
 
+    def _timeframe_range(self, tf: str):
+        """Return (since_iso, until_iso, label) for a timeframe keyword."""
+        now = datetime.now()
+        if tf == "today":
+            s = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            return s.isoformat(), now.isoformat(), "today"
+        if tf == "year":
+            s = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+            return s.isoformat(), now.isoformat(), "this year"
+        if tf == "week":
+            s, e = current_week_range(now)
+            return s.isoformat(), e.isoformat(), "this week"
+        if tf == "last_month":
+            this_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            end = this_start - timedelta(seconds=1)
+            start = end.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            return start.isoformat(), end.isoformat(), "last month"
+        if tf == "all":
+            return None, None, "all time"
+        s, e = current_month_range(now)
+        return s.isoformat(), e.isoformat(), "this month"
+
+    @staticmethod
+    def _detect_timeframe(q: str) -> str:
+        if "today" in q:
+            return "today"
+        if "year" in q:
+            return "year"
+        if "week" in q:
+            return "week"
+        if "last month" in q:
+            return "last_month"
+        return "month"
+
     def answer_question(self, question: str, user_id: Optional[str] = None,
-                        space: Optional[str] = None) -> str:
+                        space: Optional[str] = None) -> Optional[str]:
         """Answer a natural-language question about the ledger (Financial Memory).
 
-        Handles: how much spent (timeframe), spend on a category, spend at a
-        merchant, income, and 'where does my money go'. Deterministic — no LLM."""
+        Handles common patterns deterministically (no LLM). Returns None when no
+        pattern matches, so the caller can fall back to an LLM query planner."""
         import re
         uid = user_id or self.default_user
         q = question.lower()
-        now = datetime.now()
-
-        # Resolve the timeframe mentioned in the question.
-        if "today" in q:
-            since, until, label = now.replace(hour=0, minute=0, second=0, microsecond=0), now, "today"
-        elif "year" in q:
-            since, until, label = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0), now, "this year"
-        elif "week" in q:
-            s, e = current_week_range(now); since, until, label = s, e, "this week"
-        elif "last month" in q:
-            this_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-            until = this_start - timedelta(seconds=1)
-            since, label = until.replace(day=1, hour=0, minute=0, second=0, microsecond=0), "last month"
-        else:
-            s, e = current_month_range(now); since, until, label = s, e, "this month"
-        si, ui_ = since.isoformat(), until.isoformat()
+        si, ui_, label = self._timeframe_range(self._detect_timeframe(q))
         scope = f" in {space}" if space else ""
+
+        # Count / "biggest single purchase" → defer to the LLM query planner.
+        if any(w in q for w in ("how many", "how often", "number of", " times", "count")):
+            return None
+        if any(p in q for p in ("biggest purchase", "biggest expense", "largest", "most expensive",
+                                "biggest buy", "priciest", "single")):
+            return None
 
         # Income.
         if any(w in q for w in ("income", "earn", "earned", "made", "revenue", "received", "paid me")):
             total = self.db.sum_amount("finance", "income", uid, si, ui_, space=space)
             return f"💰 You've received {format_amount(total)}{scope} {label}."
 
-        # "Where does my money go" / biggest area.
-        if any(w in q for w in ("biggest", "most", "where", "top")):
+        # "Where does my money go" / biggest area (category distribution only).
+        if any(p in q for p in ("where does my money", "where is my money", "where's my money",
+                                "spend the most", "spend most", "biggest category", "biggest area",
+                                "money go", "what do i spend most")):
             by = self.category_breakdown("month", uid, space=space)
             if not by:
                 return f"No spending recorded{scope} yet."
@@ -259,13 +287,118 @@ class FinancePlugin(BasePlugin):
             total = self.db.sum_amount("finance", "expense", uid, si, ui_, category=cat, space=space)
             return f"You've spent {format_amount(total)} on {cat}{scope} {label}."
 
-        # Default: total spend for the timeframe.
-        spent = self.db.sum_amount("finance", "expense", uid, si, ui_, space=space)
-        income = self.db.sum_amount("finance", "income", uid, si, ui_, space=space)
-        out = f"💸 You've spent {format_amount(spent)}{scope} {label}."
-        if income:
-            out += f"\n💰 Received {format_amount(income)} · net {format_amount(income - spent)}."
-        return out
+        # Default: only answer if it's clearly a spending question, else defer to LLM.
+        if any(w in q for w in ("spent", "spend", "cost", "how much", "total", "budget")):
+            spent = self.db.sum_amount("finance", "expense", uid, si, ui_, space=space)
+            income = self.db.sum_amount("finance", "income", uid, si, ui_, space=space)
+            out = f"💸 You've spent {format_amount(spent)}{scope} {label}."
+            if income:
+                out += f"\n💰 Received {format_amount(income)} · net {format_amount(income - spent)}."
+            return out
+        return None  # no deterministic match — caller may try the LLM planner
+
+    def execute_query_plan(self, plan: Dict[str, Any], user_id: Optional[str] = None,
+                           space: Optional[str] = None) -> str:
+        """Execute an LLM-produced query plan deterministically (numbers from the
+        ledger, never the model). Supports a constrained metric vocabulary."""
+        uid = user_id or self.default_user
+        metric = plan.get("metric") or "spend_total"
+        si, ui_, label = self._timeframe_range(plan.get("timeframe") or "month")
+        category = plan.get("category")
+        merchant = (plan.get("merchant") or "").lower() or None
+        scope = f" in {space}" if space else ""
+
+        def _expenses():
+            recs = self.db.query_records(domain="finance", record_type="expense", user_id=uid,
+                                         since=si, until=ui_, limit=5000, space=space)
+            if category:
+                recs = [r for r in recs if r.get("entities", {}).get("category") == category]
+            if merchant:
+                recs = [r for r in recs if merchant in r.get("description", "").lower()]
+            return recs
+
+        if metric == "income_total":
+            t = self.db.sum_amount("finance", "income", uid, si, ui_, space=space)
+            return f"💰 You've received {format_amount(t)}{scope} {label}."
+        if metric == "net":
+            inc = self.db.sum_amount("finance", "income", uid, si, ui_, space=space)
+            sp = self.db.sum_amount("finance", "expense", uid, si, ui_, space=space)
+            return f"📊 Net{scope} {label}: {format_amount(inc - sp)} (in {format_amount(inc)}, out {format_amount(sp)})."
+        if metric == "count":
+            n = len(_expenses())
+            what = f" on {category}" if category else (f" at {merchant.title()}" if merchant else "")
+            return f"🧾 {n} transactions{what}{scope} {label}."
+        if metric == "largest_expense":
+            recs = _expenses()
+            if not recs:
+                return f"No matching expenses{scope} {label}."
+            top = max(recs, key=lambda r: r.get("amount", 0) or 0)
+            return (f"💥 Biggest expense{scope} {label}: {format_amount(top.get('amount') or 0)} — "
+                    f"{top.get('description', '')[:40]}.")
+        if metric == "by_category":
+            by = self.category_breakdown(self._detect_timeframe(label.replace("this ", "")), uid, space=space)
+            if not by:
+                return f"No spending{scope} {label}."
+            lines = [f"{c}: {format_amount(a)}" for c, a in by.items()]
+            return f"📊 By category{scope} {label}:\n" + "\n".join(lines)
+
+        # spend_total (default)
+        recs = _expenses()
+        t = sum(r.get("amount", 0) or 0 for r in recs)
+        what = f" on {category}" if category else (f" at {merchant.title()}" if merchant else "")
+        return f"💸 You've spent {format_amount(t)}{what}{scope} {label}."
+
+    SUBSCRIPTION_KEYWORDS = [
+        "netflix", "spotify", "microsoft", "office 365", "prime", "disney", "youtube",
+        "icloud", "adobe", "patreon", "audible", "dropbox", "notion", "figma",
+        "google one", "gym", "subscription", "membership",
+    ]
+
+    def detect_subscriptions(self, user_id: Optional[str] = None, space: Optional[str] = None) -> str:
+        """Spot likely recurring charges over the last ~4 months."""
+        import re
+        from collections import defaultdict
+        uid = user_id or self.default_user
+        since = (datetime.now() - timedelta(days=125)).isoformat()
+        recs = self.db.query_records(domain="finance", record_type="expense", user_id=uid,
+                                     since=since, limit=5000, space=space)
+
+        def _name(desc: str) -> str:
+            words = re.findall(r"[a-z0-9]+", desc.lower())
+            words = [w for w in words if w not in ("the", "for", "on", "at", "my", "paid", "bought", "spent")]
+            return " ".join(words[:2]) if words else desc.lower()
+
+        groups = defaultdict(list)  # (name, amount) -> [month,...]
+        for r in recs:
+            amt = round(r.get("amount", 0) or 0, 2)
+            if amt <= 0:
+                continue
+            name = _name(r.get("description", ""))
+            month = (r.get("timestamp", "") or "")[:7]
+            groups[(name, amt)].append((month, r.get("description", "")))
+
+        detected = []
+        for (name, amt), occ in groups.items():
+            months = {m for m, _ in occ}
+            sample = occ[0][1]
+            known = any(k in sample.lower() for k in self.SUBSCRIPTION_KEYWORDS)
+            recurring = len(months) >= 2
+            if recurring or known:
+                detected.append({"name": sample[:30] or name.title(), "amount": amt,
+                                 "recurring": recurring})
+
+        if not detected:
+            return "No recurring subscriptions detected yet. I spot them once a charge repeats month-to-month."
+
+        detected.sort(key=lambda d: -d["amount"])
+        monthly_total = sum(d["amount"] for d in detected if d["recurring"]) or sum(d["amount"] for d in detected)
+        lines = []
+        for d in detected:
+            tag = "" if d["recurring"] else "  (likely)"
+            lines.append(f"{d['name']:<24} {format_amount(d['amount']):>9}{tag}")
+        lines.append("─" * 34)
+        lines.append(f"{'Est. recurring / month':<24} {format_amount(monthly_total):>9}")
+        return "\n".join(lines)
 
     def spending_insights(self, user_id: Optional[str] = None, space: Optional[str] = None) -> str:
         """Compare this month with last month and surface the notable movements."""

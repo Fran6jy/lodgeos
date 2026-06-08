@@ -130,6 +130,24 @@ Output valid, raw JSON only. No markdown, no backticks, no prose. Exact schema:
   "category": "Groceries" | "Food & Drink" | "Shopping" | "Utilities" | "Income" | "Transport"
 }}"""
 
+QUERY_PLAN_PROMPT = """Convert the user's finance question into a JSON query plan.
+Output ONLY raw JSON — no markdown, no prose.
+
+Schema:
+{{
+  "metric": "spend_total" | "income_total" | "net" | "count" | "largest_expense" | "by_category",
+  "timeframe": "today" | "week" | "month" | "year" | "last_month" | "all",
+  "category": "<Food & Drink|Groceries|Transport|Utilities|Shopping|Entertainment|Marketing|Health|Education|Rent|null>",
+  "merchant": "<merchant keyword or null>"
+}}
+
+Examples:
+- "what's my biggest purchase this month" -> {{"metric":"largest_expense","timeframe":"month","category":null,"merchant":null}}
+- "how many times did I buy coffee" -> {{"metric":"count","timeframe":"month","category":"Food & Drink","merchant":null}}
+- "net this year" -> {{"metric":"net","timeframe":"year","category":null,"merchant":null}}
+
+Question: {question}"""
+
 QUERY_RESPONSE_PROMPT = """You are a financial assistant summarising ledger data.
 Be concise and helpful. Format amounts with £ symbol. Use bullet points.
 
