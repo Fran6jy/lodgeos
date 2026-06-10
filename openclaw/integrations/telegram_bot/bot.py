@@ -190,6 +190,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if action == "home":
         await q.edit_message_text(ui.welcome(), parse_mode="HTML", reply_markup=ui.main_menu_kb())
         return
+    if action == "donate":
+        text, kb = ui.donate_card_and_kb()
+        await q.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
+        return
     if action == "spaces":
         active = fp.db.get_active_space(uid)
         await q.edit_message_text(ui.spaces_card(active), parse_mode="HTML",
@@ -324,6 +328,11 @@ async def subscriptions_handler(update: Update, context: ContextTypes.DEFAULT_TY
     text = fp.detect_subscriptions(uid, space=fp.db.get_active_space(uid))
     await update.message.reply_text(ui.card("🔁 Subscriptions", text, mono=True),
                                     parse_mode="HTML", reply_markup=ui.back_kb())
+
+
+async def donate_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text, kb = ui.donate_card_and_kb()
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
 
 
 async def spaces_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -604,6 +613,7 @@ def main():
     app.add_handler(CommandHandler("space", space_set_handler))
     app.add_handler(CommandHandler("insights", insights_handler))
     app.add_handler(CommandHandler("subscriptions", subscriptions_handler))
+    app.add_handler(CommandHandler("donate", donate_handler))
     app.add_handler(CallbackQueryHandler(tutorial_callback, pattern=r"^tut\|"))
     app.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^menu\|"))
     app.add_handler(CallbackQueryHandler(space_callback, pattern=r"^space\|"))
