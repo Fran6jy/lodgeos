@@ -28,7 +28,8 @@ def main_menu_kb() -> InlineKeyboardMarkup:
          InlineKeyboardButton("🗂 Spaces", callback_data="menu|spaces")],
         [InlineKeyboardButton("🧾 History", callback_data="menu|history"),
          InlineKeyboardButton("📈 Dashboard", callback_data="menu|dashboard")],
-        [InlineKeyboardButton("❓ Help", callback_data="menu|help")],
+        [InlineKeyboardButton("❓ Help", callback_data="menu|help"),
+         InlineKeyboardButton("💖 Support", callback_data="menu|donate")],
     ])
 
 
@@ -48,6 +49,29 @@ def category_kb(categories, timeframe: str = "month") -> InlineKeyboardMarkup:
         rows.append(row)
     rows.append([InlineKeyboardButton("⬅️ Menu", callback_data="menu|home")])
     return InlineKeyboardMarkup(rows)
+
+
+def donate_card_and_kb():
+    """Support screen: coffee-sized PayPal buttons + custom amount. Returns (text, kb).
+
+    Reads DONATE_URL (e.g. https://paypal.me/yourname). Amount buttons append
+    /<amount> per PayPal.me convention; Custom opens the bare link."""
+    url = os.environ.get("DONATE_URL", "").rstrip("/")
+    if not url:
+        return card("💖 Support", "Donations aren't set up yet."), back_kb()
+    text = card("💖 Support LodgeOS", (
+        "LodgeOS is free and runs on coffee.\n"
+        "If it saves you time, you can fuel the developer ☕\n\n"
+        "<i>Totally optional — the bot stays free either way.</i>"
+    ))
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("☕ £3", url=f"{url}/3"),
+         InlineKeyboardButton("☕☕ £5", url=f"{url}/5"),
+         InlineKeyboardButton("🍰 £10", url=f"{url}/10")],
+        [InlineKeyboardButton("✏️ Custom amount", url=url)],
+        [InlineKeyboardButton("⬅️ Menu", callback_data="menu|home")],
+    ])
+    return text, kb
 
 
 def spaces_kb(spaces, active: str) -> InlineKeyboardMarkup:
@@ -205,6 +229,7 @@ def bot_commands() -> list:
         BotCommand("dashboard", "📈 Private web dashboard"),
         BotCommand("spaces", "🗂 Switch Budget Space"),
         BotCommand("help", "❓ How to use the bot"),
+        BotCommand("donate", "💖 Buy the dev a coffee"),
     ]
 
 
