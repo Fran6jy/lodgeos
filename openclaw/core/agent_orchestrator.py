@@ -110,6 +110,21 @@ class AgentOrchestrator:
             # Step -1: Resolve the Budget Space (prefix override or active space).
             space, message = self._resolve_space(message, user_id)
 
+            # Step 0a: Bulk void ("void/delete all entries") — deterministic, and
+            # always requires explicit confirmation before touching anything.
+            if re.search(r"\b(void|delete|remove|clear|wipe)\b.{0,20}\b(all|every)\b.{0,20}\b(entr|record|transaction|expense)", message, re.IGNORECASE):
+                db = self._storage()
+                count = len(db.query_records(domain="finance", user_id=user_id, limit=10000, space=space)) if db else 0
+                if count == 0:
+                    return self._result(False, None, f"Nothing to void — no active entries in {space}.", start)
+                return self._result(
+                    False, None,
+                    f"⚠️ This will void ALL {count} entries in your {space} space "
+                    f"(kept for audit, excluded from totals). Are you sure?",
+                    start,
+                    pending={"action": "VOID_ALL", "space": space, "count": count, "candidates": []},
+                )
+
             # Step 0: Is this a correction to an existing entry, or a new one?
             classification = self.corrector.classify(message, self.memory.recent(domain="finance"))
             intent = classification.get("intent", "RECORD_NEW")
@@ -276,6 +291,17 @@ class AgentOrchestrator:
             )
 
         return self._apply_correction_to(candidates[0], intent, clean, start)
+
+    def apply_void_all(self, user_id: str, space: Optional[str] = None):
+        """Confirmed bulk void: soft-void every active record in the space."""
+        start = time.perf_counter()
+        db = self._storage()
+        if db is None:
+            return self._result(False, None, "Storage unavailable.", start)
+        n = db.void_all_records(user_id, space=space)
+        return self._result(True, None,
+                            f"🗑️ Voided {n} entries in {space or 'all spaces'}. "
+                            f"They're excluded from totals but kept for audit.", start)
 
     def apply_correction(self, record_id, action, updates, user_id="default"):
         """Apply a correction to a specific record (used by interactive selection)."""

@@ -440,6 +440,14 @@ async def _handle_text(update: Update, text: str) -> None:
     if getattr(result, "pending", None):
         payload = {**result.pending, "user_id": user_id}
         token = _sessions.put(payload)
+        # Destructive bulk action → explicit Yes/Cancel confirmation.
+        if payload.get("action") == "VOID_ALL":
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton(f"✅ Yes, void all {payload.get('count', '')}", callback_data=f"corr|{token}|confirm")],
+                [InlineKeyboardButton("✖️ Cancel", callback_data=f"corr|{token}|cancel")],
+            ])
+            await update.message.reply_text(result.response, reply_markup=kb)
+            return
         keyboard = []
         for i, c in enumerate(payload["candidates"]):
             amt = format_amount(c["amount"] or 0, c.get("currency", "GBP"))
@@ -474,6 +482,11 @@ async def correction_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     if choice == "cancel":
         await query.edit_message_text("✖️ Correction cancelled.")
+        return
+    if choice == "confirm" and payload.get("action") == "VOID_ALL":
+        orch, _ = _get_orchestrator()
+        result = orch.apply_void_all(payload["user_id"], space=payload.get("space"))
+        await query.edit_message_text(result.response)
         return
 
     candidate = payload["candidates"][int(choice)]

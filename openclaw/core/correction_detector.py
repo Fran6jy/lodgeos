@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # If none of these appear, the message is treated as a new entry without an LLM call.
 _CORRECTION_HINTS = re.compile(
     r"\b(actually|no it was|should be|should've been|change|correct(?:ion)?|wrong|"
-    r"mistake|meant|instead|not\s*[£$€]|delete|remove|cancel|scratch that|undo|"
+    r"mistake|meant|instead|not\s*[£$€]|delete|remove|cancel|scratch that|undo|void|"
     r"edit|update the|fix|that was wrong|miscategor|recategor)\b",
     re.IGNORECASE,
 )

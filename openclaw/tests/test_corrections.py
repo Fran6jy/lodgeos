@@ -80,6 +80,30 @@ class TestOrchestratorCorrections:
         # totals now zero
         assert orchestrator._storage().sum_amount("finance", "expense", "default") == pytest.approx(0.0)
 
+    def test_void_single_entry_works(self, orchestrator):
+        # Regression: 'void' must be a correction hint, not become a general_note.
+        orchestrator.process("Spent £4.50 on coffee")
+        r = orchestrator.process("Void the £4.50 coffee")
+        assert r.success and "Voided" in r.response
+
+    def test_void_all_requires_confirmation(self, orchestrator):
+        orchestrator.process("Spent £5 on coffee")
+        orchestrator.process("Spent £8 on lunch")
+        r = orchestrator.process("Void all entries")
+        # Nothing voided yet — a confirmation is pending.
+        assert not r.success
+        assert r.pending and r.pending["action"] == "VOID_ALL"
+        assert r.pending["count"] == 2
+        assert orchestrator._storage().sum_amount("finance", "expense", "default") == pytest.approx(13.0)
+        # Confirm → everything voided.
+        applied = orchestrator.apply_void_all("default", space=r.pending["space"])
+        assert applied.success and "2 entries" in applied.response
+        assert orchestrator._storage().sum_amount("finance", "expense", "default") == pytest.approx(0.0)
+
+    def test_void_all_empty_is_graceful(self, orchestrator):
+        r = orchestrator.process("Delete all my transactions")
+        assert not r.success and "Nothing to void" in r.response
+
     def test_correction_with_no_match(self, orchestrator):
         r = orchestrator.process("Delete the £999 yacht")
         assert not r.success
