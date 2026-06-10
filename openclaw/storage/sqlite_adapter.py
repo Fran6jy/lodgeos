@@ -317,6 +317,23 @@ class SQLiteAdapter:
                     conn.execute("UPDATE records SET data = ? WHERE id = ?", (json.dumps(data), record_id))
             return bool(cur.rowcount)
 
+    def void_all_records(self, user_id: str, space: Optional[str] = None) -> int:
+        """Soft-void every active record for a user (optionally one space).
+        Returns the number of records voided. Audit rows are kept."""
+        now = datetime.now().isoformat()
+        clauses = ["user_id = ?", "COALESCE(voided, 0) = 0"]
+        params: List[Any] = [user_id]
+        if space:
+            clauses.append("COALESCE(space, 'Personal') = ?")
+            params.append(space)
+        where = " AND ".join(clauses)
+        with self._conn() as conn:
+            cur = conn.execute(
+                f"UPDATE records SET voided = 1, updated_at = ? WHERE {where}",
+                [now] + params,
+            )
+            return cur.rowcount
+
     def update_record(self, record_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Apply field updates to a record, keeping a prior-value audit snapshot.
 
