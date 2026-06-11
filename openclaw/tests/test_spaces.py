@@ -107,6 +107,18 @@ class TestSpaceTagging:
         assert _parse_space_switch("Spent £5 on coffee", fp, "u") is None
         assert _parse_space_switch("Business: spent £30 on ads", fp, "u") is None
 
+    def test_space_name_punctuation_normalised(self, db):
+        # Regression: a voice-transcribed trailing '.' must not create 'Business .'
+        from openclaw.integrations.telegram_bot.bot import _parse_space_switch, _normalize_space_name
+        assert _normalize_space_name("business .") == "Business"
+        assert _normalize_space_name("  side hustle, ") == "Side Hustle"
+
+        class _FP:
+            def __init__(self, d): self.db = d
+        fp = _FP(db)
+        # "switch to business space." (with period) resolves to existing "Business"
+        assert _parse_space_switch("switch to business space.", fp, "u") == "Business"
+
     def test_summary_isolated_by_space(self, orch):
         orch.process("Business: Spent £30 on ads")
         orch.process("Spent £10 on coffee")  # Personal
