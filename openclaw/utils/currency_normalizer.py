@@ -10,6 +10,7 @@ SYMBOL_MAP = {
     "¥": "JPY",
     "₹": "INR",
     "₩": "KRW",
+    "₦": "NGN",
     "Fr": "CHF",
     "kr": "SEK",
     "zł": "PLN",
@@ -18,18 +19,35 @@ SYMBOL_MAP = {
 
 CODE_SYMBOLS = {v: k for k, v in SYMBOL_MAP.items()}
 
+# Spoken currency names ("5,000 naira", "20 pounds", "10 bucks").
+WORD_MAP = {
+    "naira": "NGN",
+    "pound": "GBP", "pounds": "GBP", "quid": "GBP",
+    "dollar": "USD", "dollars": "USD", "bucks": "USD",
+    "euro": "EUR", "euros": "EUR",
+    "rupee": "INR", "rupees": "INR",
+    "cedi": "GHS", "cedis": "GHS",
+    "shilling": "KES", "shillings": "KES",
+    "rand": "ZAR",
+}
+
 
 def extract_amount_and_currency(text: str, default_currency: str = "GBP") -> Tuple[Optional[float], str]:
     """Extract numeric amount and ISO currency code from a string."""
     text = text.strip()
 
-    # Match patterns like £4.50, $100, €20.00, 50 GBP, USD 100
+    # Match patterns like £4.50, $100, ₦5,000, 50 GBP, USD 100, "5,000 naira"
+    word_alt = "|".join(WORD_MAP)
     patterns = [
-        r"([£$€¥₹₩])(\d+(?:[.,]\d+)?)",  # symbol before
-        r"(\d+(?:[.,]\d+)?)\s*([£$€¥₹₩])",  # symbol after
-        r"(\d+(?:[.,]\d+)?)\s*(GBP|USD|EUR|JPY|INR|CHF|SEK|PLN|ZAR|AUD|CAD|NZD)",  # code after
-        r"(GBP|USD|EUR|JPY|INR|CHF|SEK|PLN|ZAR|AUD|CAD|NZD)\s*(\d+(?:[.,]\d+)?)",  # code before
+        r"([£$€¥₹₩₦])(\d+(?:[.,]\d+)*)",  # symbol before
+        r"(\d+(?:[.,]\d+)*)\s*([£$€¥₹₩₦])",  # symbol after
+        r"(\d+(?:[.,]\d+)*)\s*(GBP|USD|EUR|JPY|INR|NGN|CHF|SEK|PLN|ZAR|AUD|CAD|NZD|GHS|KES)",  # code after
+        r"(GBP|USD|EUR|JPY|INR|NGN|CHF|SEK|PLN|ZAR|AUD|CAD|NZD|GHS|KES)\s*(\d+(?:[.,]\d+)*)",  # code before
+        rf"(\d+(?:[.,]\d+)*)\s*({word_alt})\b",  # spoken name after ("5,000 naira")
     ]
+
+    def _to_code(token: str) -> str:
+        return SYMBOL_MAP.get(token) or WORD_MAP.get(token.lower()) or token.upper()
 
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)
@@ -38,13 +56,11 @@ def extract_amount_and_currency(text: str, default_currency: str = "GBP") -> Tup
             # Determine which is amount vs currency
             try:
                 amount = float(g1.replace(",", ""))
-                currency = SYMBOL_MAP.get(g2, g2.upper())
-                return amount, currency
+                return amount, _to_code(g2)
             except ValueError:
                 try:
                     amount = float(g2.replace(",", ""))
-                    currency = SYMBOL_MAP.get(g1, g1.upper())
-                    return amount, currency
+                    return amount, _to_code(g1)
                 except ValueError:
                     continue
 

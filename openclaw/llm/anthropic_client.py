@@ -145,18 +145,21 @@ class MockLLMClient:
 
         # Intent classification prompt
         if "classify" in prompt_lower or "intents" in prompt_lower:
-            if any(w in msg_lower for w in ["spent", "bought", "paid for", "cost", "purchase"]):
-                return json.dumps({
-                    "intents": ["expense"],
-                    "primary_intent": "expense",
-                    "confidence": 0.92,
-                    "domain": "finance",
-                })
+            # Income first: phrases like "client paid invoice" must not be caught
+            # by the broader expense verbs ("paid", "sent") below.
             if any(w in msg_lower for w in ["received", "earned", "salary", "income", "paid me", "invoice", "freelance", "consulting", "dividend", "client paid"]):
                 return json.dumps({
                     "intents": ["income"],
                     "primary_intent": "income",
                     "confidence": 0.90,
+                    "domain": "finance",
+                })
+            if any(w in msg_lower for w in ["spent", "bought", "paid for", "cost", "purchase",
+                                            "withdrew", "sent ", "paid "]):
+                return json.dumps({
+                    "intents": ["expense"],
+                    "primary_intent": "expense",
+                    "confidence": 0.92,
                     "domain": "finance",
                 })
             return json.dumps({
