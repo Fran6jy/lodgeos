@@ -8,6 +8,7 @@ All messages route through the same AgentOrchestrator as the CLI.
 Each Telegram user_id gets their own ledger partition via user_id.
 """
 
+import asyncio
 import logging
 import os
 import sys
@@ -68,6 +69,7 @@ _USE_MOCK = False
 # Holds pending interactive choices (e.g. ambiguous correction menus) keyed by token.
 # SQLite-backed so menus survive bot restarts (in-memory would lose them).
 from openclaw.integrations.session_store import SqliteSessionStore
+from openclaw.integrations.telegram_bot.progress_manager import ProgressManager, _TYPING as _PM_TYPING
 from openclaw.utils.currency_normalizer import format_amount
 _sessions = SqliteSessionStore(os.environ.get("OPENCLAW_DB", "openclaw.db"))
 
@@ -423,59 +425,97 @@ def _parse_space_switch(text: str, fp, user_id: str):
     return known.get(name, name.title())
 
 
-async def _handle_text(update: Update, text: str) -> None:
-    """Shared pipeline for text (typed or transcribed): guard, process, reply."""
-    user_id = str(update.effective_user.id)
-    orch, fp = _get_orchestrator()
+def _quick_insight(fp, user_id: str, space):
+    """A cheap, real-data one-liner for the wait experience (no LLM, never faked)."""
+    try:
+        by = fp.category_breakdown("month", user_id, space=space)
+        if not by:
+            return None
+        top, amt = max(by.items(), key=lambda x: x[1])
+        from openclaw.utils.currency_normalizer import format_amount as _fmt
+        return f"💡 Your top category this month is {top} ({_fmt(amt, fp._user_currency(user_id, space))})."
+    except Exception:
+        return None
 
-    # Natural-language space switching ("switch to personal space").
-    target = _parse_space_switch(text, fp, user_id)
-    if target:
-        fp.db.set_active_space(user_id, target)
-        await update.message.reply_text(
-            ui.card("🗂 Space switched", f"Active space is now <b>{target}</b>.\nNew entries go here."),
-            parse_mode="HTML", reply_markup=ui.spaces_kb(fp.db.list_spaces(user_id), target))
-        return
 
-    # Questions aren't transactions — answer them from the ledger (Financial Memory).
-    if _looks_like_question(text):
-        answer = orch.answer(text, user_id, space=fp.db.get_active_space(user_id))
-        await update.message.reply_text(ui.card("💬 Answer", answer),
-                                        parse_mode="HTML", reply_markup=ui.back_kb())
-        return
+def _quick_keyboard():
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("📊 This Week", callback_data="menu|summary"),
+        InlineKeyboardButton("🏠 Menu", callback_data="menu|home"),
+    ]])
 
-    await update.message.reply_text("Processing…")
-    result = orch.process(text, user_id=user_id)
 
-    # Ambiguous correction → present single-tap buttons instead of asking to retype.
+async def _finalise(pm, result, user_id: str, prefix: str = "") -> None:
+    """Turn a ProcessingResult into the final edit on the progress message."""
     if getattr(result, "pending", None):
         payload = {**result.pending, "user_id": user_id}
         token = _sessions.put(payload)
-        # Destructive bulk action → explicit Yes/Cancel confirmation.
         if payload.get("action") == "VOID_ALL":
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton(f"✅ Yes, void all {payload.get('count', '')}", callback_data=f"corr|{token}|confirm")],
                 [InlineKeyboardButton("✖️ Cancel", callback_data=f"corr|{token}|cancel")],
             ])
-            await update.message.reply_text(result.response, reply_markup=kb)
-            return
-        keyboard = []
-        for i, c in enumerate(payload["candidates"]):
-            amt = format_amount(c["amount"] or 0, c.get("currency", "GBP"))
-            label = f"{c['description'][:40]} ({amt})"
-            keyboard.append([InlineKeyboardButton(label, callback_data=f"corr|{token}|{i}")])
-        keyboard.append([InlineKeyboardButton("✖️ Cancel", callback_data=f"corr|{token}|cancel")])
-        await update.message.reply_text(result.response, reply_markup=InlineKeyboardMarkup(keyboard))
+        else:
+            rows = []
+            for i, c in enumerate(payload["candidates"]):
+                amt = format_amount(c["amount"] or 0, c.get("currency", "GBP"))
+                rows.append([InlineKeyboardButton(f"{c['description'][:40]} ({amt})", callback_data=f"corr|{token}|{i}")])
+            rows.append([InlineKeyboardButton("✖️ Cancel", callback_data=f"corr|{token}|cancel")])
+            kb = InlineKeyboardMarkup(rows)
+        await pm.finish(result.response, reply_markup=kb)
         return
 
     if result.success:
-        quick = InlineKeyboardMarkup([[
-            InlineKeyboardButton("📊 This Week", callback_data="menu|summary"),
-            InlineKeyboardButton("🏠 Menu", callback_data="menu|home"),
-        ]])
-        await update.message.reply_text(result.response, reply_markup=quick)
+        await pm.finish(prefix + result.response, reply_markup=_quick_keyboard())
     else:
-        await update.message.reply_text(f"❌ {result.response}")
+        await pm.fail(f"⚠️ {result.response}")
+
+
+async def _process_user_text(update, context, text: str, kind: str = "text",
+                             heard: str = "", pm: "ProgressManager" = None) -> None:
+    """Shared pipeline for text (typed or transcribed) with a perceived-performance layer.
+
+    Fast paths (space switch, questions) reply immediately. The record path runs
+    the blocking orchestrator in a worker thread while a ProgressManager keeps the
+    UI alive (ack → typing → staged edits → insight → final)."""
+    user_id = str(update.effective_user.id)
+    orch, fp = _get_orchestrator()
+    chat_id = update.effective_chat.id
+
+    # Fast path 1 — natural-language space switch (no heavy processing).
+    target = _parse_space_switch(text, fp, user_id)
+    if target:
+        if pm:
+            await pm._close()
+        fp.db.set_active_space(user_id, target)
+        await context.bot.send_message(
+            chat_id, ui.card("🗂 Space switched", f"Active space is now <b>{target}</b>.\nNew entries go here."),
+            parse_mode="HTML", reply_markup=ui.spaces_kb(fp.db.list_spaces(user_id), target))
+        return
+
+    # Fast path 2 — questions (Financial Memory). Run in a thread (may hit the LLM).
+    if _looks_like_question(text):
+        if pm:
+            await pm._close()
+        await context.bot.send_chat_action(chat_id, _PM_TYPING)
+        answer = await asyncio.to_thread(orch.answer, text, user_id, fp.db.get_active_space(user_id))
+        await context.bot.send_message(chat_id, ui.card("💬 Answer", answer),
+                                       parse_mode="HTML", reply_markup=ui.back_kb())
+        return
+
+    # Record path — acknowledge first, then process off the event loop.
+    space = fp.db.get_active_space(user_id)
+    if pm is None:
+        pm = ProgressManager(context.bot, chat_id, kind=kind,
+                             insight_provider=lambda: _quick_insight(fp, user_id, space))
+        await pm.start()
+    try:
+        result = await asyncio.to_thread(orch.process, text, user_id)
+    except Exception:
+        logger.exception("processing failed")
+        await pm.fail()
+        return
+    await _finalise(pm, result, user_id, prefix=heard)
 
 
 async def correction_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -512,8 +552,8 @@ async def correction_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle free-text messages — route through orchestrator."""
-    await _handle_text(update, update.message.text)
+    """Handle free-text messages — route through orchestrator with progress UI."""
+    await _process_user_text(update, context, update.message.text, kind="text")
 
 
 async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -526,42 +566,52 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if file_id is None:
         return
 
-    await update.message.reply_text("🧾 Reading document…")
+    user_id = str(update.effective_user.id)
+    orch, fp = _get_orchestrator()
+    space = fp.db.get_active_space(user_id)
+    pm = ProgressManager(context.bot, update.effective_chat.id, kind="receipt",
+                         insight_provider=lambda: _quick_insight(fp, user_id, space))
+    await pm.start()
     try:
         tg_file = await context.bot.get_file(file_id)
         image = bytes(await tg_file.download_as_bytearray())
-    except Exception as e:
-        await update.message.reply_text(f"❌ Couldn't fetch that image: {e}")
+        image_b64 = base64.b64encode(image).decode()
+        result = await asyncio.to_thread(orch.process_document, image_b64, "image/jpeg", user_id)
+    except Exception:
+        logger.exception("document processing failed")
+        await pm.fail("⚠️ I couldn't read that document. Try a clearer photo?")
         return
-
-    image_b64 = base64.b64encode(image).decode()
-    orch, _ = _get_orchestrator()
-    result = orch.process_document(image_b64, mime="image/jpeg", user_id=str(update.effective_user.id))
-    await update.message.reply_text(result.response if result.success else f"❌ {result.response}")
+    await _finalise(pm, result, user_id)
 
 
 async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Transcribe a voice/audio note, then route the text through the pipeline."""
+    """Transcribe a voice/audio note (with progress), then route the text."""
     media = update.message.voice or update.message.audio
     if media is None:
         return
 
-    await update.message.reply_text("🎙️ Transcribing…")
+    user_id = str(update.effective_user.id)
+    orch, fp = _get_orchestrator()
+    space = fp.db.get_active_space(user_id)
+    pm = ProgressManager(context.bot, update.effective_chat.id, kind="voice",
+                         insight_provider=lambda: _quick_insight(fp, user_id, space))
+    await pm.start()
     try:
         tg_file = await context.bot.get_file(media.file_id)
         audio = bytes(await tg_file.download_as_bytearray())
-        text = _get_transcriber().transcribe(audio, suffix=".ogg")
-    except Exception as e:
+        text = await asyncio.to_thread(_get_transcriber().transcribe, audio, ".ogg")
+    except Exception:
         logger.exception("Transcription failed")
-        await update.message.reply_text(f"❌ Couldn't transcribe that: {e}")
+        await pm.fail("⚠️ Couldn't transcribe that. Try again?")
         return
 
     if not text:
-        await update.message.reply_text("🤔 I couldn't make out any words — try again?")
+        await pm.fail("🤔 I couldn't make out any words — try again?")
         return
 
-    await update.message.reply_text(f'🗣️ Heard: "{text}"')
-    await _handle_text(update, text)
+    # Continue with the same progress message; prepend what was heard to the result.
+    await _process_user_text(update, context, text, kind="voice",
+                             heard=f'🗣️ Heard: "{text}"\n\n', pm=pm)
 
 
 # -------------------------------------------------------------------------
