@@ -143,30 +143,38 @@ class FinancePlugin(BasePlugin):
             user_id=uid, since=since, until=until, limit=500, space=space,
         )
 
-        total_exp = sum(r.get("amount", 0) or 0 for r in expenses)
-        total_inc = sum(r.get("amount", 0) or 0 for r in income)
-
-        # Category breakdown
-        by_cat: Dict[str, float] = {}
+        # Group by currency — different currencies are NEVER summed together
+        # (no FX conversion), so each is shown on its own.
+        from collections import defaultdict
+        exp_by_cur: Dict[str, float] = defaultdict(float)
+        inc_by_cur: Dict[str, float] = defaultdict(float)
+        cat_by: Dict[tuple, float] = defaultdict(float)  # (category, currency) -> amount
         for r in expenses:
-            cat = r.get("entities", {}).get("category", "Other")
-            by_cat[cat] = by_cat.get(cat, 0) + (r.get("amount", 0) or 0)
+            c, a = r.get("currency", "GBP"), (r.get("amount", 0) or 0)
+            exp_by_cur[c] += a
+            cat_by[(r.get("entities", {}).get("category", "Other"), c)] += a
+        for r in income:
+            inc_by_cur[r.get("currency", "GBP")] += (r.get("amount", 0) or 0)
 
-        cur = self._user_currency(uid, space)
+        def _multi(d):  # "₦30.00 · $2.00"
+            return " · ".join(format_amount(v, k) for k, v in sorted(d.items(), key=lambda x: -x[1]) if v)
+
         scope = f" · {space}" if space else ""
         lines = [f"📊 {label} Finance Summary{scope}", ""]
-        if total_exp > 0:
-            lines.append(f"💸 Total Spent:  {format_amount(total_exp, cur)}")
-        if total_inc > 0:
-            lines.append(f"💰 Total Income: {format_amount(total_inc, cur)}")
-        if total_exp > 0 and total_inc > 0:
-            lines.append(f"📈 Net:          {format_amount(total_inc - total_exp, cur)}")
+        if any(exp_by_cur.values()):
+            lines.append(f"💸 Total Spent:  {_multi(exp_by_cur)}")
+        if any(inc_by_cur.values()):
+            lines.append(f"💰 Total Income: {_multi(inc_by_cur)}")
+        all_curs = {c for c, v in {**exp_by_cur, **inc_by_cur}.items() if v}
+        if len(all_curs) == 1 and any(exp_by_cur.values()) and any(inc_by_cur.values()):
+            c = next(iter(all_curs))
+            lines.append(f"📈 Net:          {format_amount(inc_by_cur[c] - exp_by_cur[c], c)}")
 
-        if by_cat:
+        if cat_by:
             lines.append("")
             lines.append("By category:")
-            for cat, amt in sorted(by_cat.items(), key=lambda x: -x[1]):
-                lines.append(f"  {cat:<20} {format_amount(amt, cur)}")
+            for (cat, c), amt in sorted(cat_by.items(), key=lambda x: -x[1]):
+                lines.append(f"  {cat:<20} {format_amount(amt, c)}")
 
         if not expenses and not income:
             lines.append("No records found for this period.")
