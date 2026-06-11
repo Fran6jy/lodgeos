@@ -72,6 +72,22 @@ class TestBatchEntry:
         ans = orch.answer("how much have I spent this month?", "default")
         assert "₦" in ans and "£" not in ans
 
+    def test_mixed_currency_summary_is_grouped_not_summed(self, orch):
+        db = orch._storage()
+        now = __import__("datetime").datetime.now().isoformat()
+        for amt, cat, c in [(10, "Transport", "NGN"), (20, "Food & Drink", "NGN"), (2, "Entertainment", "USD")]:
+            db.insert_record({"domain": "finance", "type": "expense", "amount": amt, "currency": c,
+                              "description": cat, "entities": {"category": cat}, "timestamp": now,
+                              "user_id": "default", "confidence": 0.9, "space": "Personal"})
+        summary = orch.router._registry["finance"].summarize("week", "default")
+        # Currencies shown separately, NEVER merged into one nonsense number.
+        assert "₦30.00" in summary
+        assert "$2.00" in summary
+        assert "$32" not in summary and "$47" not in summary  # no cross-currency sum
+        # Each category shown in its own currency
+        assert "Transport            ₦10.00" in summary
+        assert "Entertainment        $2.00" in summary
+
     def test_batch_without_currency_defaults_gbp(self, orch):
         r = orch.process("1. Spent 10 on lunch\n2. Spent 5 on coffee")
         assert r.success

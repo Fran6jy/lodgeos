@@ -138,21 +138,25 @@ class AgentOrchestrator:
                     _, batch_currency = extract_amount_and_currency(message, default_currency)
                 results = [self.process(ln, user_id=user_id, default_currency=batch_currency)
                            for ln in batch_lines]
+                from collections import defaultdict
                 ok = [r for r in results if r.success and r.record]
                 lines_out = [f"🧾 Recorded {len(ok)} of {len(results)} entries:"]
-                total = 0.0
+                totals = defaultdict(float)  # currency -> total expense
                 for r in results:
                     if r.success and r.record:
                         rec = r.record
                         amt = rec.get("amount") or 0
-                        total += amt if rec.get("type") == "expense" else 0
+                        rcur = rec.get("currency", "GBP")
+                        if rec.get("type") == "expense":
+                            totals[rcur] += amt
                         cat = rec.get("entities", {}).get("category", "")
-                        lines_out.append(f"✅ {format_amount(amt, rec.get('currency', 'GBP'))} — "
+                        lines_out.append(f"✅ {format_amount(amt, rcur)} — "
                                          f"{rec.get('description', '')[:38]} ({cat})")
                     else:
                         lines_out.append(f"❌ {r.response[:60]}")
-                if total:
-                    lines_out.append(f"💸 Total spent: {format_amount(total, batch_currency)}")
+                if any(totals.values()):
+                    total_str = " · ".join(format_amount(v, k) for k, v in totals.items() if v)
+                    lines_out.append(f"💸 Total spent: {total_str}")
                 elapsed = (time.perf_counter() - start) * 1000
                 return ProcessingResult(bool(ok), ok[0].record if ok else None,
                                         "\n".join(lines_out), "finance", elapsed)
