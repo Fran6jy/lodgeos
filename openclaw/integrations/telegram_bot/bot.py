@@ -352,7 +352,7 @@ async def space_set_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     """/space <name> — create and/or switch to a Budget Space."""
     _, fp = _get_orchestrator()
     uid = str(update.effective_user.id)
-    name = " ".join(context.args or []).strip().title()
+    name = _normalize_space_name(" ".join(context.args or []))
     if not name:
         await update.message.reply_text("Usage: /space <name>   e.g. /space Side Hustle")
         return
@@ -406,6 +406,14 @@ def _looks_like_question(text: str) -> bool:
 _SWITCH_VERBS = ("switch", "change", "go", "move", "use", "set", "open")
 
 
+def _normalize_space_name(name: str) -> str:
+    """Clean a space name: drop punctuation (e.g. a transcribed trailing '.'),
+    collapse whitespace, Title-Case. Prevents 'Business .' ≠ 'Business' bugs."""
+    import re
+    name = re.sub(r"[^\w &'\-]", " ", name)   # strip '.', ',', etc.
+    return " ".join(name.split()).strip().title()
+
+
 def _parse_space_switch(text: str, fp, user_id: str):
     """Detect 'switch to <space>' style commands; return the target space or None."""
     import re
@@ -418,11 +426,11 @@ def _parse_space_switch(text: str, fp, user_id: str):
     cleaned = re.sub(
         r"\b(switch|change|go|move|use|set|open|to|into|over|my|the|active|current|space|spaces|please)\b",
         " ", t)
-    name = " ".join(cleaned.split()).strip()
+    name = _normalize_space_name(cleaned)
     if not name:
         return None
     known = {s.lower(): s for s in fp.db.list_spaces(user_id)}
-    return known.get(name, name.title())
+    return known.get(name.lower(), name)
 
 
 def _quick_insight(fp, user_id: str, space):
@@ -485,22 +493,24 @@ async def _process_user_text(update, context, text: str, kind: str = "text",
     # Fast path 1 — natural-language space switch (no heavy processing).
     target = _parse_space_switch(text, fp, user_id)
     if target:
-        if pm:
-            await pm._close()
         fp.db.set_active_space(user_id, target)
-        await context.bot.send_message(
-            chat_id, ui.card("🗂 Space switched", f"Active space is now <b>{target}</b>.\nNew entries go here."),
-            parse_mode="HTML", reply_markup=ui.spaces_kb(fp.db.list_spaces(user_id), target))
+        txt = ui.card("🗂 Space switched", f"Active space is now <b>{target}</b>.\nNew entries go here.")
+        kb = ui.spaces_kb(fp.db.list_spaces(user_id), target)
+        if pm:  # reuse the progress message rather than leaving it dangling
+            await pm.finish(txt, reply_markup=kb, parse_mode="HTML")
+        else:
+            await context.bot.send_message(chat_id, txt, parse_mode="HTML", reply_markup=kb)
         return
 
     # Fast path 2 — questions (Financial Memory). Run in a thread (may hit the LLM).
     if _looks_like_question(text):
-        if pm:
-            await pm._close()
         await context.bot.send_chat_action(chat_id, _PM_TYPING)
         answer = await asyncio.to_thread(orch.answer, text, user_id, fp.db.get_active_space(user_id))
-        await context.bot.send_message(chat_id, ui.card("💬 Answer", answer),
-                                       parse_mode="HTML", reply_markup=ui.back_kb())
+        txt = ui.card("💬 Answer", answer)
+        if pm:
+            await pm.finish(txt, reply_markup=ui.back_kb(), parse_mode="HTML")
+        else:
+            await context.bot.send_message(chat_id, txt, parse_mode="HTML", reply_markup=ui.back_kb())
         return
 
     # Record path — acknowledge first, then process off the event loop.
