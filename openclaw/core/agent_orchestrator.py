@@ -98,7 +98,24 @@ class AgentOrchestrator:
                 return db
         return None
 
-    def process(self, message: str, user_id: str = "default") -> ProcessingResult:
+    @staticmethod
+    def _split_batch(message: str) -> list:
+        """Split a multi-line message into individual transaction lines.
+
+        Returns [] unless the message has 2+ lines that each contain an amount —
+        e.g. a numbered list of the day's spendings. List numbering/bullets are
+        stripped so each line parses as a normal single entry."""
+        if "\n" not in message:
+            return []
+        lines = []
+        for raw in message.splitlines():
+            ln = re.sub(r"^\s*(?:\d+[\.\)]|[-*•])\s*", "", raw).strip()
+            if ln and re.search(r"\d", ln):
+                lines.append(ln)
+        return lines if len(lines) >= 2 else []
+
+    def process(self, message: str, user_id: str = "default",
+                default_currency: str = "GBP") -> ProcessingResult:
         """
         Process a natural language message end-to-end.
 
@@ -109,6 +126,36 @@ class AgentOrchestrator:
         try:
             # Step -1: Resolve the Budget Space (prefix override or active space).
             space, message = self._resolve_space(message, user_id)
+
+            # Step 0-batch: a numbered/multi-line list of transactions → record each
+            # line separately, sharing any currency stated anywhere in the message.
+            batch_lines = self._split_batch(message)
+            if batch_lines:
+                from openclaw.core.intent_parser import _has_explicit_currency
+                from openclaw.utils.currency_normalizer import extract_amount_and_currency
+                batch_currency = default_currency
+                if _has_explicit_currency(message):
+                    _, batch_currency = extract_amount_and_currency(message, default_currency)
+                results = [self.process(ln, user_id=user_id, default_currency=batch_currency)
+                           for ln in batch_lines]
+                ok = [r for r in results if r.success and r.record]
+                lines_out = [f"🧾 Recorded {len(ok)} of {len(results)} entries:"]
+                total = 0.0
+                for r in results:
+                    if r.success and r.record:
+                        rec = r.record
+                        amt = rec.get("amount") or 0
+                        total += amt if rec.get("type") == "expense" else 0
+                        cat = rec.get("entities", {}).get("category", "")
+                        lines_out.append(f"✅ {format_amount(amt, rec.get('currency', 'GBP'))} — "
+                                         f"{rec.get('description', '')[:38]} ({cat})")
+                    else:
+                        lines_out.append(f"❌ {r.response[:60]}")
+                if total:
+                    lines_out.append(f"💸 Total spent: {format_amount(total, batch_currency)}")
+                elapsed = (time.perf_counter() - start) * 1000
+                return ProcessingResult(bool(ok), ok[0].record if ok else None,
+                                        "\n".join(lines_out), "finance", elapsed)
 
             # Step 0a: Bulk void ("void/delete all entries") — deterministic, and
             # always requires explicit confirmation before touching anything.
@@ -132,7 +179,7 @@ class AgentOrchestrator:
                 return self._handle_correction(intent, classification, user_id, message, start)
 
             # Step 1: Parse intent and extract entities
-            record = self.parser.parse(message)
+            record = self.parser.parse(message, default_currency=default_currency)
             record["user_id"] = user_id
             record["processed_at"] = datetime.now().isoformat()
 

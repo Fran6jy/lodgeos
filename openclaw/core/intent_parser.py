@@ -22,9 +22,10 @@ from openclaw.utils.currency_normalizer import extract_amount_and_currency
 
 logger = logging.getLogger(__name__)
 
-# Detects an explicit currency symbol or 3-letter code in free text.
+# Detects an explicit currency symbol, 3-letter code, or spoken name in free text.
 _EXPLICIT_CURRENCY_RE = re.compile(
-    r"[£$€¥₹₩]|\b(?:GBP|USD|EUR|JPY|INR|CHF|SEK|PLN|ZAR|AUD|CAD|NZD)\b",
+    r"[£$€¥₹₩₦]|\b(?:GBP|USD|EUR|JPY|INR|NGN|CHF|SEK|PLN|ZAR|AUD|CAD|NZD|GHS|KES|"
+    r"naira|pounds?|quid|dollars?|bucks|euros?|rupees?|cedis?|shillings?|rand)\b",
     re.IGNORECASE,
 )
 
@@ -41,7 +42,7 @@ class IntentParser:
     def __init__(self, llm_client):
         self.llm = llm_client
 
-    def parse(self, message: str) -> Dict[str, Any]:
+    def parse(self, message: str, default_currency: str = "GBP") -> Dict[str, Any]:
         """
         Parse a natural language message into a structured record.
 
@@ -79,13 +80,17 @@ class IntentParser:
             record["timestamp"] = parse_datetime(record["timestamp"], now).isoformat()
 
         # Reconcile amount/currency with the deterministic extractor.
-        detected_amount, detected_currency = extract_amount_and_currency(message)
+        detected_amount, detected_currency = extract_amount_and_currency(message, default_currency)
         if record.get("amount") is None and detected_amount is not None:
             record["amount"] = detected_amount
             record["currency"] = detected_currency
         elif _has_explicit_currency(message):
-            # An explicit symbol/code in the message overrides the LLM's default.
+            # An explicit symbol/code/name in the message overrides the LLM's default.
             record["currency"] = detected_currency
+        elif default_currency != "GBP":
+            # No explicit currency in this message — inherit the caller's default
+            # (e.g. the currency stated elsewhere in a batch message).
+            record["currency"] = default_currency
 
         return record
 
