@@ -50,6 +50,11 @@ def gather_data(db: SQLiteAdapter, user_id: str, space: str = None) -> Dict[str,
     total_exp = sum(r.get("amount", 0) or 0 for r in expenses)
     total_inc = sum(r.get("amount", 0) or 0 for r in income)
 
+    # Primary currency = most common among this view's records (no FX conversion).
+    from collections import Counter
+    cur_counts = Counter(r.get("currency", "GBP") for r in (expenses + income) if r.get("amount") is not None)
+    cur = cur_counts.most_common(1)[0][0] if cur_counts else "GBP"
+
     by_cat: Dict[str, float] = {}
     for r in expenses:
         cat = r.get("entities", {}).get("category", "Other")
@@ -74,6 +79,7 @@ def gather_data(db: SQLiteAdapter, user_id: str, space: str = None) -> Dict[str,
         "user_id": user_id,
         "month": now.strftime("%B %Y"),
         "space": space,                       # None = All spaces
+        "currency": cur,
         "spaces": db.list_spaces(user_id),
         "total_expense": total_exp,
         "total_income": total_inc,
@@ -98,7 +104,7 @@ def render_html(d: Dict[str, Any], link_base: str = "") -> str:
     cat_rows = "".join(
         f"""<div class="row"><span class="lbl">{cat}</span>
         <span class="bar"><i style="width:{(amt / cat_max * 100):.0f}%"></i></span>
-        <span class="amt">{format_amount(amt)}</span></div>"""
+        <span class="amt">{format_amount(amt, d["currency"])}</span></div>"""
         for cat, amt in d["by_category"].items()
     ) or "<p class='muted'>No spending this month.</p>"
 
@@ -108,7 +114,7 @@ def render_html(d: Dict[str, Any], link_base: str = "") -> str:
         pct = min(b["pct"], 100)
         budget_rows += f"""<div class="row"><span class="lbl">{b['category']}</span>
         <span class="bar"><i class="{'over' if over else ''}" style="width:{pct:.0f}%"></i></span>
-        <span class="amt">{format_amount(b['spent'])} / {format_amount(b['budget'])}</span></div>"""
+        <span class="amt">{format_amount(b['spent'], d['currency'])} / {format_amount(b['budget'], d['currency'])}</span></div>"""
     if not budget_rows:
         budget_rows = "<p class='muted'>No budgets set. Use /setbudget in the bot.</p>"
 
@@ -155,9 +161,9 @@ color:#c9d1d9;text-decoration:none;font-size:13px}}
 <p class="sub">Read-only · {('Space: <b>' + d['space'] + '</b>') if d.get('space') else 'All spaces'} · user <code>{d['user_id']}</code></p>
 {space_bar}
 <div class="cards">
-  <div class="card"><div class="k">Spent</div><div class="v">{format_amount(d['total_expense'])}</div></div>
-  <div class="card"><div class="k">Income</div><div class="v">{format_amount(d['total_income'])}</div></div>
-  <div class="card"><div class="k">Net</div><div class="v {net_cls}">{format_amount(net)}</div></div>
+  <div class="card"><div class="k">Spent</div><div class="v">{format_amount(d['total_expense'], d['currency'])}</div></div>
+  <div class="card"><div class="k">Income</div><div class="v">{format_amount(d['total_income'], d['currency'])}</div></div>
+  <div class="card"><div class="k">Net</div><div class="v {net_cls}">{format_amount(net, d["currency"])}</div></div>
 </div>
 <div class="panel"><h2>Spending by category</h2>{cat_rows}</div>
 <div class="panel"><h2>Budgets</h2>{budget_rows}</div>
