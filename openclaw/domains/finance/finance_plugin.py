@@ -152,25 +152,35 @@ class FinancePlugin(BasePlugin):
             cat = r.get("entities", {}).get("category", "Other")
             by_cat[cat] = by_cat.get(cat, 0) + (r.get("amount", 0) or 0)
 
+        cur = self._user_currency(uid, space)
         scope = f" · {space}" if space else ""
         lines = [f"📊 {label} Finance Summary{scope}", ""]
         if total_exp > 0:
-            lines.append(f"💸 Total Spent:  {format_amount(total_exp)}")
+            lines.append(f"💸 Total Spent:  {format_amount(total_exp, cur)}")
         if total_inc > 0:
-            lines.append(f"💰 Total Income: {format_amount(total_inc)}")
+            lines.append(f"💰 Total Income: {format_amount(total_inc, cur)}")
         if total_exp > 0 and total_inc > 0:
-            lines.append(f"📈 Net:          {format_amount(total_inc - total_exp)}")
+            lines.append(f"📈 Net:          {format_amount(total_inc - total_exp, cur)}")
 
         if by_cat:
             lines.append("")
             lines.append("By category:")
             for cat, amt in sorted(by_cat.items(), key=lambda x: -x[1]):
-                lines.append(f"  {cat:<20} {format_amount(amt)}")
+                lines.append(f"  {cat:<20} {format_amount(amt, cur)}")
 
         if not expenses and not income:
             lines.append("No records found for this period.")
 
         return "\n".join(lines)
+
+    def _user_currency(self, user_id: Optional[str] = None, space: Optional[str] = None) -> str:
+        """The user's primary currency = the most common one in their records.
+        Aggregates are shown in this currency (no FX conversion is performed)."""
+        from collections import Counter
+        uid = user_id or self.default_user
+        recs = self.db.query_records(domain="finance", user_id=uid, limit=400, space=space)
+        counts = Counter(r.get("currency", "GBP") for r in recs if r.get("amount") is not None)
+        return counts.most_common(1)[0][0] if counts else "GBP"
 
     def _range(self, timeframe: str, now: Optional[datetime] = None):
         now = now or datetime.now()
@@ -248,6 +258,7 @@ class FinancePlugin(BasePlugin):
         q = question.lower()
         si, ui_, label = self._timeframe_range(self._detect_timeframe(q))
         scope = f" in {space}" if space else ""
+        cur = self._user_currency(uid, space)
 
         # Count / "biggest single purchase" → defer to the LLM query planner.
         if any(w in q for w in ("how many", "how often", "number of", " times", "count")):
@@ -259,7 +270,7 @@ class FinancePlugin(BasePlugin):
         # Income.
         if any(w in q for w in ("income", "earn", "earned", "made", "revenue", "received", "paid me")):
             total = self.db.sum_amount("finance", "income", uid, si, ui_, space=space)
-            return f"💰 You've received {format_amount(total)}{scope} {label}."
+            return f"💰 You've received {format_amount(total, cur)}{scope} {label}."
 
         # "Where does my money go" / biggest area (category distribution only).
         if any(p in q for p in ("where does my money", "where is my money", "where's my money",
@@ -269,7 +280,7 @@ class FinancePlugin(BasePlugin):
             if not by:
                 return f"No spending recorded{scope} yet."
             top, amt = max(by.items(), key=lambda x: x[1])
-            return f"🏆 Your biggest area{scope} is {top} — {format_amount(amt)} this month."
+            return f"🏆 Your biggest area{scope} is {top} — {format_amount(amt, cur)} this month."
 
         # Spend at a specific merchant ("...at Tesco") — checked before category so
         # 'at Tesco' answers per-merchant rather than per-category.
@@ -279,21 +290,21 @@ class FinancePlugin(BasePlugin):
             recs = self.db.query_records(domain="finance", record_type="expense", user_id=uid,
                                          since=si, until=ui_, limit=5000, space=space)
             total = sum(r.get("amount", 0) or 0 for r in recs if kw in r.get("description", "").lower())
-            return f"You've spent {format_amount(total)} at {kw.title()}{scope} {label}."
+            return f"You've spent {format_amount(total, cur)} at {kw.title()}{scope} {label}."
 
         # Spend on a specific category.
         cat = self._detect_category(q)
         if cat:
             total = self.db.sum_amount("finance", "expense", uid, si, ui_, category=cat, space=space)
-            return f"You've spent {format_amount(total)} on {cat}{scope} {label}."
+            return f"You've spent {format_amount(total, cur)} on {cat}{scope} {label}."
 
         # Default: only answer if it's clearly a spending question, else defer to LLM.
         if any(w in q for w in ("spent", "spend", "cost", "how much", "total", "budget")):
             spent = self.db.sum_amount("finance", "expense", uid, si, ui_, space=space)
             income = self.db.sum_amount("finance", "income", uid, si, ui_, space=space)
-            out = f"💸 You've spent {format_amount(spent)}{scope} {label}."
+            out = f"💸 You've spent {format_amount(spent, cur)}{scope} {label}."
             if income:
-                out += f"\n💰 Received {format_amount(income)} · net {format_amount(income - spent)}."
+                out += f"\n💰 Received {format_amount(income, cur)} · net {format_amount(income - spent, cur)}."
             return out
         return None  # no deterministic match — caller may try the LLM planner
 
@@ -307,6 +318,7 @@ class FinancePlugin(BasePlugin):
         category = plan.get("category")
         merchant = (plan.get("merchant") or "").lower() or None
         scope = f" in {space}" if space else ""
+        cur = self._user_currency(uid, space)
 
         def _expenses():
             recs = self.db.query_records(domain="finance", record_type="expense", user_id=uid,
@@ -319,11 +331,11 @@ class FinancePlugin(BasePlugin):
 
         if metric == "income_total":
             t = self.db.sum_amount("finance", "income", uid, si, ui_, space=space)
-            return f"💰 You've received {format_amount(t)}{scope} {label}."
+            return f"💰 You've received {format_amount(t, cur)}{scope} {label}."
         if metric == "net":
             inc = self.db.sum_amount("finance", "income", uid, si, ui_, space=space)
             sp = self.db.sum_amount("finance", "expense", uid, si, ui_, space=space)
-            return f"📊 Net{scope} {label}: {format_amount(inc - sp)} (in {format_amount(inc)}, out {format_amount(sp)})."
+            return f"📊 Net{scope} {label}: {format_amount(inc - sp, cur)} (in {format_amount(inc, cur)}, out {format_amount(sp, cur)})."
         if metric == "count":
             n = len(_expenses())
             what = f" on {category}" if category else (f" at {merchant.title()}" if merchant else "")
@@ -333,20 +345,20 @@ class FinancePlugin(BasePlugin):
             if not recs:
                 return f"No matching expenses{scope} {label}."
             top = max(recs, key=lambda r: r.get("amount", 0) or 0)
-            return (f"💥 Biggest expense{scope} {label}: {format_amount(top.get('amount') or 0)} — "
+            return (f"💥 Biggest expense{scope} {label}: {format_amount(top.get('amount') or 0, cur)} — "
                     f"{top.get('description', '')[:40]}.")
         if metric == "by_category":
             by = self.category_breakdown(self._detect_timeframe(label.replace("this ", "")), uid, space=space)
             if not by:
                 return f"No spending{scope} {label}."
-            lines = [f"{c}: {format_amount(a)}" for c, a in by.items()]
+            lines = [f"{c}: {format_amount(a, cur)}" for c, a in by.items()]
             return f"📊 By category{scope} {label}:\n" + "\n".join(lines)
 
         # spend_total (default)
         recs = _expenses()
         t = sum(r.get("amount", 0) or 0 for r in recs)
         what = f" on {category}" if category else (f" at {merchant.title()}" if merchant else "")
-        return f"💸 You've spent {format_amount(t)}{what}{scope} {label}."
+        return f"💸 You've spent {format_amount(t, cur)}{what}{scope} {label}."
 
     SUBSCRIPTION_KEYWORDS = [
         "netflix", "spotify", "microsoft", "office 365", "prime", "disney", "youtube",
@@ -362,6 +374,7 @@ class FinancePlugin(BasePlugin):
         since = (datetime.now() - timedelta(days=125)).isoformat()
         recs = self.db.query_records(domain="finance", record_type="expense", user_id=uid,
                                      since=since, limit=5000, space=space)
+        cur = self._user_currency(uid, space)
 
         def _name(desc: str) -> str:
             words = re.findall(r"[a-z0-9]+", desc.lower())
@@ -395,14 +408,15 @@ class FinancePlugin(BasePlugin):
         lines = []
         for d in detected:
             tag = "" if d["recurring"] else "  (likely)"
-            lines.append(f"{d['name']:<24} {format_amount(d['amount']):>9}{tag}")
+            lines.append(f"{d['name']:<24} {format_amount(d['amount'], cur):>9}{tag}")
         lines.append("─" * 34)
-        lines.append(f"{'Est. recurring / month':<24} {format_amount(monthly_total):>9}")
+        lines.append(f"{'Est. recurring / month':<24} {format_amount(monthly_total, cur):>9}")
         return "\n".join(lines)
 
     def spending_insights(self, user_id: Optional[str] = None, space: Optional[str] = None) -> str:
         """Compare this month with last month and surface the notable movements."""
         uid = user_id or self.default_user
+        cur = self._user_currency(uid, space)
         now = datetime.now()
 
         this_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -434,15 +448,15 @@ class FinancePlugin(BasePlugin):
         if prev_total > 0:
             pct = (this_total - prev_total) / prev_total * 100
             arrow = "🔺" if pct >= 0 else "🔻"
-            lines.append(f"💸 Spent {format_amount(this_total)} so far — {arrow} {abs(pct):.0f}% vs last month ({format_amount(prev_total)}).")
+            lines.append(f"💸 Spent {format_amount(this_total, cur)} so far — {arrow} {abs(pct):.0f}% vs last month ({format_amount(prev_total, cur)}).")
         else:
-            lines.append(f"💸 Spent {format_amount(this_total)} so far this month.")
+            lines.append(f"💸 Spent {format_amount(this_total, cur)} so far this month.")
 
         # Top category this month.
         if this_cat:
             top, amt = max(this_cat.items(), key=lambda x: x[1])
             share = (amt / this_total * 100) if this_total else 0
-            lines.append(f"🏆 Biggest area: {top} ({format_amount(amt)}, {share:.0f}% of spend).")
+            lines.append(f"🏆 Biggest area: {top} ({format_amount(amt, cur)}, {share:.0f}% of spend).")
 
         # Biggest mover vs last month.
         movers = []
@@ -453,9 +467,9 @@ class FinancePlugin(BasePlugin):
         if movers and abs(movers[0][1]) >= 0.01:
             cat, delta = movers[0]
             if delta > 0:
-                lines.append(f"📈 {cat} is up {format_amount(delta)} on last month.")
+                lines.append(f"📈 {cat} is up {format_amount(delta, cur)} on last month.")
             else:
-                lines.append(f"📉 {cat} is down {format_amount(abs(delta))} on last month.")
+                lines.append(f"📉 {cat} is down {format_amount(abs(delta), cur)} on last month.")
 
         return "\n".join(lines)
 
@@ -535,14 +549,16 @@ class FinancePlugin(BasePlugin):
                    user_id: Optional[str] = None, space: str = "Personal") -> str:
         uid = user_id or self.default_user
         self.db.upsert_budget(uid, category, amount, period, space=space)
+        cur = self._user_currency(uid, space)
         scope = f" [{space}]" if space != "Personal" else ""
-        return f"Budget set{scope}: {category} — {format_amount(amount)} per {period}"
+        return f"Budget set{scope}: {category} — {format_amount(amount, cur)} per {period}"
 
     def _budget_remaining(self, category: str, new_spend: float, memory,
                           space: str = "Personal") -> Optional[str]:
         """Return budget remaining string if a budget is set for this category/space."""
         try:
             uid = self.default_user
+            cur = self._user_currency(uid, space)
             budgets = self.db.get_budgets(uid, "monthly", space=space)
             for b in budgets:
                 if b["category"].lower() == category.lower():
@@ -554,8 +570,8 @@ class FinancePlugin(BasePlugin):
                     )
                     remaining = b["amount"] - spent
                     if remaining < 0:
-                        return f"⚠️  Over budget by {format_amount(abs(remaining))} (budget: {format_amount(b['amount'])})"
-                    return f"Monthly budget remaining ({category}): {format_amount(remaining)}"
+                        return f"⚠️  Over budget by {format_amount(abs(remaining), cur)} (budget: {format_amount(b['amount'], cur)})"
+                    return f"Monthly budget remaining ({category}): {format_amount(remaining, cur)}"
         except Exception as e:
             logger.debug("Budget check failed: %s", e)
         return None
@@ -568,6 +584,7 @@ class FinancePlugin(BasePlugin):
             return f"No budgets set{scope}. Use /setbudget <category> <amount> to create one."
 
         s, e = current_month_range()
+        cur = self._user_currency(uid, space)
         scope = f" · {space}" if space else ""
         lines = [f"📋 Monthly Budget Report{scope}", ""]
         for b in budgets:
@@ -581,9 +598,9 @@ class FinancePlugin(BasePlugin):
             status = "⚠️ " if remaining < 0 else "✅ "
             lines.append(
                 f"{status}{b['category']:<20} "
-                f"Spent: {format_amount(spent):>10}  "
-                f"Budget: {format_amount(b['amount']):>10}  "
-                f"Remaining: {format_amount(remaining):>10}  ({pct:.0f}%)"
+                f"Spent: {format_amount(spent, cur):>10}  "
+                f"Budget: {format_amount(b['amount'], cur):>10}  "
+                f"Remaining: {format_amount(remaining, cur):>10}  ({pct:.0f}%)"
             )
         return "\n".join(lines)
 
@@ -595,8 +612,9 @@ class FinancePlugin(BasePlugin):
             user_id=uid, since=s.isoformat(), until=e.isoformat(), limit=100, space=space,
         )
         total = sum(r.get("amount", 0) or 0 for r in records)
-        lines = [f"💰 Income this month: {format_amount(total)}", ""]
+        cur = self._user_currency(uid, space)
+        lines = [f"💰 Income this month: {format_amount(total, cur)}", ""]
         for r in records:
             ts = r.get("timestamp", "")[:10]
-            lines.append(f"  {ts}  {r.get('description', ''):<35} {format_amount(r.get('amount', 0))}")
+            lines.append(f"  {ts}  {r.get('description', ''):<35} {format_amount(r.get('amount', 0), r.get('currency', cur))}")
         return "\n".join(lines)

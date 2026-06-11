@@ -60,6 +60,18 @@ class TestBatchEntry:
         assert r.success
         assert len(orch._storage().query_records(domain="finance", user_id="default", limit=10)) == 1
 
+    def test_summary_shows_records_currency_not_gbp(self, orch):
+        # Regression: a naira user's totals must show ₦, not a hardcoded £.
+        orch.process(FRIEND_MESSAGE)
+        fp = orch.router._registry["finance"]
+        assert fp._user_currency("default") == "NGN"
+        summary = fp.summarize("month", "default")
+        assert "₦61,800.00" in summary
+        assert "£" not in summary
+        # Q&A totals too
+        ans = orch.answer("how much have I spent this month?", "default")
+        assert "₦" in ans and "£" not in ans
+
     def test_batch_without_currency_defaults_gbp(self, orch):
         r = orch.process("1. Spent 10 on lunch\n2. Spent 5 on coffee")
         assert r.success

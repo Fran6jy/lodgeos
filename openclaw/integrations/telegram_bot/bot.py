@@ -169,7 +169,9 @@ async def _send_chart(q, fp, uid: str) -> None:
     from openclaw.integrations.telegram_bot import charts
     space = fp.db.get_active_space(uid)
     by_cat = fp.category_breakdown("month", uid, space=space)
-    png = charts.category_donut(by_cat, f"This month · {space}")
+    from openclaw.utils.currency_normalizer import CODE_SYMBOLS
+    symbol = CODE_SYMBOLS.get(fp._user_currency(uid, space), "")
+    png = charts.category_donut(by_cat, f"This month · {space}", currency_symbol=symbol or "£")
     cats = list(by_cat.keys())
     kb = ui.category_kb(cats, "month") if cats else ui.back_kb()
     await q.message.reply_photo(
