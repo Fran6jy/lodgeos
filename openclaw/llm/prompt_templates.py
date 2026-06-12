@@ -130,6 +130,23 @@ Output valid, raw JSON only. No markdown, no backticks, no prose. Exact schema:
   "category": "Groceries" | "Food & Drink" | "Shopping" | "Utilities" | "Income" | "Transport"
 }}"""
 
+LINE_ITEMS_PROMPT = """Extract EACH separate transaction from this message as a JSON array.
+Output ONLY a raw JSON array — no markdown, no prose.
+
+Each element:
+{{"amount": number, "currency": "GBP|USD|EUR|NGN|GHS|KES|null", "description": "<short>", "type": "expense"|"income"}}
+
+Rules:
+- One element per distinct amount. Do NOT merge amounts or sum them.
+- A currency stated once (e.g. "naira") applies to amounts that don't state their own.
+- "description" = the few words explaining that specific amount.
+- "withdrew/spent/paid/sent/bought" → expense; "received/earned/salary/refund" → income.
+
+Examples:
+"5000 for transport, 10000 for fees" -> [{{"amount":5000,"currency":null,"description":"transport","type":"expense"}},{{"amount":10000,"currency":null,"description":"fees","type":"expense"}}]
+
+Message: {message}"""
+
 QUERY_PLAN_PROMPT = """Convert the user's finance question into a JSON query plan.
 Output ONLY raw JSON — no markdown, no prose.
 
