@@ -44,6 +44,14 @@ class TranscriptionConfig:
     cloud_api_key: Optional[str] = None
     cloud_model: str = "whisper-large-v3"
 
+    # Accuracy tuning (both modes)
+    language: str = "en"
+    # Vocabulary bias: nudges Whisper toward finance/currency words it otherwise
+    # mishears (e.g. "naira" → "NIRROR"). Override/extend via WHISPER_PROMPT.
+    prompt: str = ("Personal finance voice note. Amounts and currencies like "
+                   "naira, pounds, dollars, euros, cedis. Words: spent, paid, "
+                   "transport, transcript, registry, groceries, rent, salary.")
+
     @classmethod
     def from_env(cls) -> "TranscriptionConfig":
         return cls(
@@ -54,6 +62,8 @@ class TranscriptionConfig:
             cloud_base_url=os.environ.get("WHISPER_CLOUD_BASE_URL", "https://api.groq.com/openai/v1"),
             cloud_api_key=os.environ.get("WHISPER_CLOUD_API_KEY"),
             cloud_model=os.environ.get("WHISPER_CLOUD_MODEL", "whisper-large-v3"),
+            language=os.environ.get("WHISPER_LANGUAGE", "en"),
+            prompt=os.environ.get("WHISPER_PROMPT", cls.prompt),
         )
 
 
@@ -86,7 +96,14 @@ class LocalWhisperTranscriber:
         tmp = Path(tempfile.mkdtemp()) / f"voice{suffix}"
         tmp.write_bytes(audio)
         try:
-            segments, _ = model.transcribe(str(tmp))
+            segments, _ = model.transcribe(
+                str(tmp),
+                language=self.config.language or None,
+                initial_prompt=self.config.prompt or None,  # vocabulary bias
+                beam_size=5,                      # better than greedy for accents
+                vad_filter=True,                  # skip silence → fewer hallucinations
+                condition_on_previous_text=False,  # stops runaway repetition
+            )
             return " ".join(seg.text.strip() for seg in segments).strip()
         finally:
             tmp.unlink(missing_ok=True)
@@ -108,7 +125,9 @@ class CloudWhisperTranscriber:
             url,
             headers={"Authorization": f"Bearer {self.config.cloud_api_key}"},
             files={"file": (f"voice{suffix}", audio, "audio/ogg")},
-            data={"model": self.config.cloud_model},
+            data={"model": self.config.cloud_model,
+                  "language": self.config.language or "en",
+                  "prompt": self.config.prompt or ""},  # same vocabulary bias
             timeout=120,
         )
         resp.raise_for_status()
