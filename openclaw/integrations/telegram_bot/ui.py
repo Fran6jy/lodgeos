@@ -28,8 +28,9 @@ def main_menu_kb() -> InlineKeyboardMarkup:
          InlineKeyboardButton("🗂 Spaces", callback_data="menu|spaces")],
         [InlineKeyboardButton("🧾 History", callback_data="menu|history"),
          InlineKeyboardButton("📈 Dashboard", callback_data="menu|dashboard")],
-        [InlineKeyboardButton("❓ Help", callback_data="menu|help"),
+        [InlineKeyboardButton("🔔 Reminders", callback_data="menu|reminders"),
          InlineKeyboardButton("💖 Support", callback_data="menu|donate")],
+        [InlineKeyboardButton("❓ Help", callback_data="menu|help")],
     ])
 
 
@@ -69,6 +70,24 @@ def donate_card_and_kb():
          InlineKeyboardButton("☕☕ £5", url=f"{url}/5"),
          InlineKeyboardButton("🍰 £10", url=f"{url}/10")],
         [InlineKeyboardButton("✏️ Custom amount", url=url)],
+        [InlineKeyboardButton("⬅️ Menu", callback_data="menu|home")],
+    ])
+    return text, kb
+
+
+def reminders_card_and_kb(reminders: dict):
+    """Toggle screen for the daily digest + morning briefing. Returns (text, kb)."""
+    d = "✅" if reminders.get("digest") else "⬜️"
+    b = "✅" if reminders.get("briefing") else "⬜️"
+    text = card("🔔 Reminders", (
+        "Get a gentle nudge so tracking becomes a habit:\n\n"
+        f"{d} <b>Daily digest</b> — evening recap of today's spending\n"
+        f"{b} <b>Morning briefing</b> — yesterday + month-to-date\n\n"
+        "<i>Tap to toggle. Sent once a day at the times set by the bot host.</i>"
+    ))
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"{d} Daily digest", callback_data="rem|digest")],
+        [InlineKeyboardButton(f"{b} Morning briefing", callback_data="rem|briefing")],
         [InlineKeyboardButton("⬅️ Menu", callback_data="menu|home")],
     ])
     return text, kb
@@ -225,6 +244,8 @@ def bot_commands() -> list:
         BotCommand("income", "💰 Income this month"),
         BotCommand("insights", "💡 Spending insights vs last month"),
         BotCommand("subscriptions", "🔁 Detect recurring charges"),
+        BotCommand("reminders", "🔔 Daily digest / morning briefing"),
+        BotCommand("digest", "📊 Preview today's digest"),
         BotCommand("history", "🧾 Recent transactions"),
         BotCommand("dashboard", "📈 Private web dashboard"),
         BotCommand("spaces", "🗂 Switch Budget Space"),

@@ -181,6 +181,78 @@ class FinancePlugin(BasePlugin):
 
         return "\n".join(lines)
 
+    def _budget_remaining_total(self, uid: str, space: Optional[str]) -> Optional[float]:
+        """Sum of (budget − spent) across monthly budgets, or None if no budgets."""
+        budgets = self.db.get_budgets(uid, "monthly", space=space)
+        if not budgets:
+            return None
+        s, e = current_month_range()
+        rem = 0.0
+        for b in budgets:
+            spent = self.db.sum_amount("finance", "expense", uid, s.isoformat(), e.isoformat(),
+                                       category=b["category"], space=b.get("space"))
+            rem += b["amount"] - spent
+        return rem
+
+    def daily_digest(self, user_id: Optional[str] = None, space: Optional[str] = None) -> str:
+        """Evening recap of today's spending. Real data only."""
+        from collections import defaultdict
+        uid = user_id or self.default_user
+        now = datetime.now()
+        since = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        exp = self.db.query_records(domain="finance", record_type="expense", user_id=uid,
+                                    since=since, until=now.isoformat(), limit=2000, space=space)
+        if not exp:
+            return "📊 Today\n\nNo spending logged today — nice one! 🎉"
+
+        by_cur = defaultdict(float)
+        biggest = max(exp, key=lambda r: r.get("amount", 0) or 0)
+        for r in exp:
+            by_cur[r.get("currency", "GBP")] += (r.get("amount", 0) or 0)
+
+        lines = ["📊 Today", ""]
+        lines.append("💸 Expenses: " + " · ".join(format_amount(v, k) for k, v in by_cur.items()))
+        lines.append(f"🏆 Biggest spend: {biggest.get('description', '')[:30]} "
+                     f"{format_amount(biggest.get('amount') or 0, biggest.get('currency', 'GBP'))}")
+        rem = self._budget_remaining_total(uid, space)
+        if rem is not None:
+            lines.append(f"🎯 Budget left this month: {format_amount(rem, self._user_currency(uid, space))}")
+        return "\n".join(lines)
+
+    def morning_briefing(self, user_id: Optional[str] = None, space: Optional[str] = None) -> str:
+        """Morning recap: yesterday + month-to-date + budget + recurring. No fake balance."""
+        from collections import defaultdict
+        uid = user_id or self.default_user
+        now = datetime.now()
+        today0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        y_start = today0 - timedelta(days=1)
+        y_exp = self.db.query_records(domain="finance", record_type="expense", user_id=uid,
+                                      since=y_start.isoformat(), until=today0.isoformat(),
+                                      limit=2000, space=space)
+        ms, me = current_month_range(now)
+        m_exp = self.db.query_records(domain="finance", record_type="expense", user_id=uid,
+                                      since=ms.isoformat(), until=me.isoformat(), limit=5000, space=space)
+
+        def _grp(rows):
+            d = defaultdict(float)
+            for r in rows:
+                d[r.get("currency", "GBP")] += (r.get("amount", 0) or 0)
+            return d
+
+        lines = ["☀️ Good morning", ""]
+        yg = _grp(y_exp)
+        if yg:
+            lines.append("Yesterday you spent " + " · ".join(format_amount(v, k) for k, v in yg.items()) + ".")
+        else:
+            lines.append("Nothing logged yesterday.")
+        mg = _grp(m_exp)
+        if mg:
+            lines.append("This month so far: " + " · ".join(format_amount(v, k) for k, v in mg.items()) + ".")
+        rem = self._budget_remaining_total(uid, space)
+        if rem is not None:
+            lines.append(f"🎯 Budget left this month: {format_amount(rem, self._user_currency(uid, space))}")
+        return "\n".join(lines)
+
     def _user_currency(self, user_id: Optional[str] = None, space: Optional[str] = None) -> str:
         """The user's primary currency = the most common one in their records.
         Aggregates are shown in this currency (no FX conversion is performed)."""
