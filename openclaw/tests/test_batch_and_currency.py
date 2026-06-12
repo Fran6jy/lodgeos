@@ -52,8 +52,21 @@ class TestBatchEntry:
         assert all(rec["currency"] == "NGN" for rec in recs)
         amounts = sorted(rec["amount"] for rec in recs)
         assert amounts == [1800.0, 5000.0, 10000.0, 10000.0, 35000.0]
-        assert "5 of 5" in r.response.replace("Recorded ", "Recorded ")
+        assert "Recorded 5 entries" in r.response
         assert "₦61,800.00" in r.response
+
+    def test_voice_paragraph_multiple_amounts_split(self, orch):
+        # The screenshot bug: one spoken paragraph, no line breaks, 4 amounts.
+        msg = ("5,000 naira we drew for transportation and snacks. The 5,000 naira paid "
+               "to transcripts office. 10,000 naira given for fast tracking. "
+               "Another 10,000 naira given at the registry.")
+        r = orch.process(msg)
+        assert r.success
+        recs = orch._storage().query_records(domain="finance", user_id="default", limit=20)
+        assert len(recs) == 4                       # NOT one merged ₦30,000
+        assert all(rec["currency"] == "NGN" for rec in recs)
+        assert sorted(rec["amount"] for rec in recs) == [5000.0, 5000.0, 10000.0, 10000.0]
+        assert "Recorded 4 entries" in r.response
 
     def test_single_line_not_batched(self, orch):
         r = orch.process("Spent £4.50 on coffee")

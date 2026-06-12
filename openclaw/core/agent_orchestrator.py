@@ -98,21 +98,94 @@ class AgentOrchestrator:
                 return db
         return None
 
-    @staticmethod
-    def _split_batch(message: str) -> list:
-        """Split a multi-line message into individual transaction lines.
+    # Money-like tokens: currency-attached amounts, thousands-separated numbers,
+    # or decimal money. Used to decide if a message holds multiple transactions.
+    _MONEY_RE = re.compile(
+        r"[£$€₦¥₹]\s*\d[\d,]*(?:\.\d+)?"
+        r"|\d[\d,]*(?:\.\d+)?\s*(?:naira|pounds?|dollars?|euros?|cedis?|shillings?|gbp|usd|ngn|eur|ghs|kes)"
+        r"|\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b"
+        r"|\b\d+\.\d{2}\b",
+        re.IGNORECASE,
+    )
 
-        Returns [] unless the message has 2+ lines that each contain an amount —
-        e.g. a numbered list of the day's spendings. List numbering/bullets are
-        stripped so each line parses as a normal single entry."""
-        if "\n" not in message:
+    def _is_multi_item(self, message: str) -> bool:
+        """True if the message looks like several transactions (a list, or 2+ amounts)."""
+        lines = [l for l in message.splitlines() if re.search(r"\d", l)]
+        if "\n" in message and len(lines) >= 2:
+            return True
+        return len(self._MONEY_RE.findall(message)) >= 2
+
+    def _extract_line_items(self, message: str, default_currency: str) -> list:
+        """Use the LLM to split one message into individual transactions."""
+        from openclaw.llm.prompt_templates import LINE_ITEMS_PROMPT
+        from openclaw.core.intent_parser import _has_explicit_currency
+        from openclaw.utils.currency_normalizer import (
+            extract_amount_and_currency, SYMBOL_MAP, WORD_MAP)
+
+        msg_cur = default_currency
+        if _has_explicit_currency(message):
+            _, msg_cur = extract_amount_and_currency(message, default_currency)
+
+        def _norm_cur(c):
+            if not c:
+                return None
+            return SYMBOL_MAP.get(c) or WORD_MAP.get(str(c).lower()) or str(c).upper()
+
+        try:
+            raw = self.llm.complete(LINE_ITEMS_PROMPT.format(message=message))
+            data = self._parse_plan(raw)
+        except Exception as e:
+            logger.warning("Line-item extraction failed: %s", e)
             return []
-        lines = []
-        for raw in message.splitlines():
-            ln = re.sub(r"^\s*(?:\d+[\.\)]|[-*•])\s*", "", raw).strip()
-            if ln and re.search(r"\d", ln):
-                lines.append(ln)
-        return lines if len(lines) >= 2 else []
+        if isinstance(data, dict):
+            data = data.get("items") or data.get("transactions") or [data]
+        items = []
+        for d in (data or []):
+            try:
+                amt = float(d.get("amount"))
+            except (TypeError, ValueError):
+                continue
+            items.append({
+                "amount": amt,
+                "currency": _norm_cur(d.get("currency")) or msg_cur,
+                "description": (d.get("description") or "entry")[:80],
+                "type": d.get("type") if d.get("type") in ("expense", "income") else "expense",
+            })
+        return items
+
+    def _record_items(self, items: list, user_id: str, space: str, start: float) -> ProcessingResult:
+        """Store each extracted item as its own record; return a grouped receipt."""
+        from collections import defaultdict
+        records = []
+        for it in items:
+            rec = {
+                "domain": "finance", "type": it["type"], "amount": it["amount"],
+                "currency": it["currency"], "description": it["description"],
+                "entities": {}, "raw_input": it["description"], "confidence": 0.8,
+                "user_id": user_id, "space": space, "timestamp": datetime.now().isoformat(),
+            }
+            plugin, domain = self.router.route(rec)
+            rec["domain"] = domain
+            rec = plugin.transform(rec)
+            plugin.store(rec)
+            self.memory.add(rec)
+            records.append(rec)
+
+        lines_out = [f"🧾 Recorded {len(records)} entries:"]
+        totals = defaultdict(float)
+        for rec in records:
+            amt, cur = rec.get("amount") or 0, rec.get("currency", "GBP")
+            if rec.get("type") == "expense":
+                totals[cur] += amt
+            cat = rec.get("entities", {}).get("category", "")
+            lines_out.append(f"✅ {format_amount(amt, cur)} — {rec.get('description', '')[:38]} ({cat})")
+        if any(totals.values()):
+            lines_out.append("💸 Total spent: " + " · ".join(format_amount(v, k) for k, v in totals.items() if v))
+        if space and space != "Personal":
+            lines_out.append(f"🗂 Space: {space}")
+        elapsed = (time.perf_counter() - start) * 1000
+        return ProcessingResult(bool(records), records[0] if records else None,
+                                "\n".join(lines_out), "finance", elapsed)
 
     def process(self, message: str, user_id: str = "default",
                 default_currency: str = "GBP") -> ProcessingResult:
@@ -126,40 +199,6 @@ class AgentOrchestrator:
         try:
             # Step -1: Resolve the Budget Space (prefix override or active space).
             space, message = self._resolve_space(message, user_id)
-
-            # Step 0-batch: a numbered/multi-line list of transactions → record each
-            # line separately, sharing any currency stated anywhere in the message.
-            batch_lines = self._split_batch(message)
-            if batch_lines:
-                from openclaw.core.intent_parser import _has_explicit_currency
-                from openclaw.utils.currency_normalizer import extract_amount_and_currency
-                batch_currency = default_currency
-                if _has_explicit_currency(message):
-                    _, batch_currency = extract_amount_and_currency(message, default_currency)
-                results = [self.process(ln, user_id=user_id, default_currency=batch_currency)
-                           for ln in batch_lines]
-                from collections import defaultdict
-                ok = [r for r in results if r.success and r.record]
-                lines_out = [f"🧾 Recorded {len(ok)} of {len(results)} entries:"]
-                totals = defaultdict(float)  # currency -> total expense
-                for r in results:
-                    if r.success and r.record:
-                        rec = r.record
-                        amt = rec.get("amount") or 0
-                        rcur = rec.get("currency", "GBP")
-                        if rec.get("type") == "expense":
-                            totals[rcur] += amt
-                        cat = rec.get("entities", {}).get("category", "")
-                        lines_out.append(f"✅ {format_amount(amt, rcur)} — "
-                                         f"{rec.get('description', '')[:38]} ({cat})")
-                    else:
-                        lines_out.append(f"❌ {r.response[:60]}")
-                if any(totals.values()):
-                    total_str = " · ".join(format_amount(v, k) for k, v in totals.items() if v)
-                    lines_out.append(f"💸 Total spent: {total_str}")
-                elapsed = (time.perf_counter() - start) * 1000
-                return ProcessingResult(bool(ok), ok[0].record if ok else None,
-                                        "\n".join(lines_out), "finance", elapsed)
 
             # Step 0a: Bulk void ("void/delete all entries") — deterministic, and
             # always requires explicit confirmation before touching anything.
@@ -175,6 +214,13 @@ class AgentOrchestrator:
                     start,
                     pending={"action": "VOID_ALL", "space": space, "count": count, "candidates": []},
                 )
+
+            # Step 0b: Multiple transactions in one message (a list, or a spoken
+            # paragraph with several amounts) → record each separately.
+            if self._is_multi_item(message):
+                items = self._extract_line_items(message, default_currency)
+                if len(items) >= 2:
+                    return self._record_items(items, user_id, space, start)
 
             # Step 0: Is this a correction to an existing entry, or a new one?
             classification = self.corrector.classify(message, self.memory.recent(domain="finance"))

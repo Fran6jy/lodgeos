@@ -81,6 +81,30 @@ class MockLLMClient:
         original_msg = msg_match.group(1).strip() if msg_match else ""
         msg_lower = original_msg.lower()
 
+        # Line-items prompt (heuristic): split a message into multiple transactions.
+        if "json array" in prompt_lower and "each separate transaction" in prompt_lower:
+            um = re.search(r"Message:\s*(.+)$", prompt, re.DOTALL)
+            msg = (um.group(1) if um else "").strip()
+            msg = re.sub(r"(?m)^\s*\d+[.)]\s*", "", msg)  # strip list numbering (1. 2.)
+            money = re.compile(
+                r"(?:([£$€₦])\s*)?(\d[\d,]*(?:\.\d+)?)\s*"
+                r"(naira|pounds?|dollars?|euros?|gbp|usd|ngn|eur)?", re.IGNORECASE)
+            sym = {"£": "GBP", "$": "USD", "€": "EUR", "₦": "NGN"}
+            wrd = {"naira": "NGN", "pound": "GBP", "pounds": "GBP", "dollar": "USD",
+                   "dollars": "USD", "euro": "EUR", "euros": "EUR"}
+            ms = [m for m in money.finditer(msg)]
+            items = []
+            for i, m in enumerate(ms):
+                amt = float(m.group(2).replace(",", ""))
+                end = ms[i + 1].start() if i + 1 < len(ms) else len(msg)
+                desc = msg[m.end():end].strip(" .,;:-")[:60] or "entry"
+                cur = sym.get(m.group(1)) or wrd.get((m.group(3) or "").lower()) or None
+                pre = msg[max(0, m.start() - 30):m.start()].lower()
+                rtype = "income" if any(w in (pre + desc.lower()) for w in
+                                        ("received", "earned", "salary", "refund", "income")) else "expense"
+                items.append({"amount": amt, "currency": cur, "description": desc, "type": rtype})
+            return json.dumps(items)
+
         # Query-plan prompt (heuristic): translate a question into a plan.
         if "query plan" in prompt_lower and "metric" in prompt_lower:
             qm = re.search(r"Question:\s*(.+?)(?:\n|$)", prompt)
