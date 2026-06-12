@@ -198,6 +198,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         text, kb = ui.donate_card_and_kb()
         await q.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
         return
+    if action == "reminders":
+        text, kb = ui.reminders_card_and_kb(fp.db.get_reminders(uid))
+        await q.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
+        return
     if action == "spaces":
         active = fp.db.get_active_space(uid)
         await q.edit_message_text(ui.spaces_card(active), parse_mode="HTML",
@@ -337,6 +341,58 @@ async def subscriptions_handler(update: Update, context: ContextTypes.DEFAULT_TY
 async def donate_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text, kb = ui.donate_card_and_kb()
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
+
+
+async def reminders_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _, fp = _get_orchestrator()
+    text, kb = ui.reminders_card_and_kb(fp.db.get_reminders(str(update.effective_user.id)))
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
+
+
+async def reminders_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Toggle a reminder opt-in from the inline switcher."""
+    q = update.callback_query
+    await q.answer()
+    kind = q.data.split("|", 1)[1]  # 'digest' | 'briefing'
+    _, fp = _get_orchestrator()
+    uid = str(q.from_user.id)
+    current = fp.db.get_reminders(uid)
+    fp.db.set_reminder(uid, kind, not current.get(kind, False))
+    text, kb = ui.reminders_card_and_kb(fp.db.get_reminders(uid))
+    await q.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
+
+
+async def digest_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Preview today's digest on demand."""
+    _, fp = _get_orchestrator()
+    await update.message.reply_text(fp.daily_digest(str(update.effective_user.id)),
+                                    reply_markup=ui.back_kb())
+
+
+async def briefing_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Preview the morning briefing on demand."""
+    _, fp = _get_orchestrator()
+    await update.message.reply_text(fp.morning_briefing(str(update.effective_user.id)),
+                                    reply_markup=ui.back_kb())
+
+
+async def _send_reminder(context, kind: str, builder_name: str) -> None:
+    """Daily job: send the digest/briefing to every opted-in user."""
+    _, fp = _get_orchestrator()
+    builder = getattr(fp, builder_name)
+    for uid in fp.db.list_reminder_users(kind):
+        try:
+            await context.bot.send_message(int(uid), builder(uid))
+        except Exception:
+            logger.warning("Reminder '%s' failed for user %s", kind, uid, exc_info=True)
+
+
+async def _send_digests(context):
+    await _send_reminder(context, "digest", "daily_digest")
+
+
+async def _send_briefings(context):
+    await _send_reminder(context, "briefing", "morning_briefing")
 
 
 async def spaces_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -676,15 +732,31 @@ def main():
     app.add_handler(CommandHandler("insights", insights_handler))
     app.add_handler(CommandHandler("subscriptions", subscriptions_handler))
     app.add_handler(CommandHandler("donate", donate_handler))
+    app.add_handler(CommandHandler("reminders", reminders_handler))
+    app.add_handler(CommandHandler("digest", digest_handler))
+    app.add_handler(CommandHandler("briefing", briefing_handler))
     app.add_handler(CallbackQueryHandler(tutorial_callback, pattern=r"^tut\|"))
     app.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^menu\|"))
     app.add_handler(CallbackQueryHandler(space_callback, pattern=r"^space\|"))
+    app.add_handler(CallbackQueryHandler(reminders_callback, pattern=r"^rem\|"))
     app.add_handler(CallbackQueryHandler(category_callback, pattern=r"^cat\|"))
     app.add_handler(CallbackQueryHandler(history_page_callback, pattern=r"^hist\|"))
     app.add_handler(CallbackQueryHandler(correction_callback, pattern=r"^corr\|"))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, voice_handler))
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, photo_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+
+    # Daily reminders (opt-in per user). Times are server-local (UTC on the VM).
+    if app.job_queue is not None:
+        from datetime import time as _dtime
+        digest_h = int(os.environ.get("DIGEST_HOUR", "20"))
+        briefing_h = int(os.environ.get("BRIEFING_HOUR", "7"))
+        app.job_queue.run_daily(_send_digests, time=_dtime(hour=digest_h, minute=0))
+        app.job_queue.run_daily(_send_briefings, time=_dtime(hour=briefing_h, minute=0))
+        logger.info("Scheduled daily digest @%02d:00 and briefing @%02d:00 (server time)",
+                    digest_h, briefing_h)
+    else:
+        logger.warning("JobQueue unavailable — install python-telegram-bot[job-queue] to enable reminders.")
 
     logger.info("OpenClaw Telegram bot starting…")
     app.run_polling()

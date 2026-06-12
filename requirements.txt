@@ -7,8 +7,8 @@ faster-whisper>=1.0.0
 
 # CLI (no extra deps needed — uses stdlib)
 
-# Telegram bot (Phase 2)
-python-telegram-bot>=21.0
+# Telegram bot (Phase 2). [job-queue] enables daily digest / morning briefing.
+python-telegram-bot[job-queue]>=21.0
 
 # API server (Phase 2/5)
 fastapi>=0.115.0

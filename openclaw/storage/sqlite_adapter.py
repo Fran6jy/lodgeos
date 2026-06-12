@@ -64,9 +64,11 @@ CREATE TABLE IF NOT EXISTS dashboard_tokens (
 );
 
 CREATE TABLE IF NOT EXISTS user_prefs (
-    user_id       TEXT PRIMARY KEY,
-    active_space  TEXT DEFAULT 'Personal',
-    tutorial_done INTEGER DEFAULT 0
+    user_id          TEXT PRIMARY KEY,
+    active_space     TEXT DEFAULT 'Personal',
+    tutorial_done    INTEGER DEFAULT 0,
+    digest_enabled   INTEGER DEFAULT 0,
+    briefing_enabled INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS user_spaces (
@@ -123,6 +125,10 @@ class SQLiteAdapter:
         pcols = {row["name"] for row in conn.execute("PRAGMA table_info(user_prefs)")}
         if pcols and "tutorial_done" not in pcols:
             conn.execute("ALTER TABLE user_prefs ADD COLUMN tutorial_done INTEGER DEFAULT 0")
+        if pcols and "digest_enabled" not in pcols:
+            conn.execute("ALTER TABLE user_prefs ADD COLUMN digest_enabled INTEGER DEFAULT 0")
+        if pcols and "briefing_enabled" not in pcols:
+            conn.execute("ALTER TABLE user_prefs ADD COLUMN briefing_enabled INTEGER DEFAULT 0")
 
     @contextmanager
     def _conn(self):
@@ -480,6 +486,40 @@ class SQLiteAdapter:
                 "SELECT tutorial_done FROM user_prefs WHERE user_id = ?", (user_id,)
             ).fetchone()
         return bool(row and row["tutorial_done"])
+
+    # -------------------------------------------------------------------------
+    # Reminder opt-ins (daily digest / morning briefing)
+    # -------------------------------------------------------------------------
+
+    _REMINDER_COLS = {"digest": "digest_enabled", "briefing": "briefing_enabled"}
+
+    def set_reminder(self, user_id: str, kind: str, enabled: bool) -> None:
+        col = self._REMINDER_COLS[kind]
+        with self._conn() as conn:
+            conn.execute(
+                f"INSERT INTO user_prefs (user_id, {col}) VALUES (?, ?) "
+                f"ON CONFLICT(user_id) DO UPDATE SET {col} = excluded.{col}",
+                (user_id, 1 if enabled else 0),
+            )
+
+    def get_reminders(self, user_id: str) -> Dict[str, bool]:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT digest_enabled, briefing_enabled FROM user_prefs WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+        return {
+            "digest": bool(row and row["digest_enabled"]),
+            "briefing": bool(row and row["briefing_enabled"]),
+        }
+
+    def list_reminder_users(self, kind: str) -> List[str]:
+        col = self._REMINDER_COLS[kind]
+        with self._conn() as conn:
+            rows = conn.execute(
+                f"SELECT user_id FROM user_prefs WHERE {col} = 1"
+            ).fetchall()
+        return [r["user_id"] for r in rows]
 
     def set_tutorial_done(self, user_id: str) -> None:
         with self._conn() as conn:
