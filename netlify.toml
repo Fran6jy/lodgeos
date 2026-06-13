@@ -1,0 +1,19 @@
+# Netlify build config for the LodgeOS landing page (lives in /landing).
+[build]
+  base = "landing"
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# Single-page site — serve index.html for any path (hash anchors).
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
