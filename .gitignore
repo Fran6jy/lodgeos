@@ -38,3 +38,8 @@ env/
 Thumbs.db
 .idea/
 .vscode/
+
+# Landing page preview config (local)
+.claude/
+landing/node_modules/
+landing/dist/
