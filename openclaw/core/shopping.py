@@ -65,7 +65,8 @@ class ShoppingManager:
             if not items:
                 return ("reply", f"Your “{name}” list is empty.")
             self.db.set_active_list(user_id, None)
-            return ("buy", name, [{"item": i["item"], "amount": i["amount"] or 0,
+            return ("buy", name, [{"item": i["item"],
+                                   "amount": (i["amount"] or 0) * (i.get("quantity") or 1),
                                    "currency": i.get("currency", "GBP")} for i in items])
 
         # Clear / delete a list.
@@ -89,7 +90,7 @@ class ShoppingManager:
             inline = message.split(":", 1)[1] if ":" in message else re.split(r"\bwith\b|\blist\b", message, flags=re.I)[-1]
             items = self._parse_items(inline, self.currency_fn(user_id, space))
             for it in items:
-                self.db.add_shopping_item(user_id, space, name, it["item"], it["amount"], it["currency"])
+                self.db.add_shopping_item(user_id, space, name, it["item"], it["amount"], it["currency"], it["quantity"])
             head = f"🛒 Started “{name}”." + ("" if items else " Add items like “ginger 500, milk 1200”, then say “done”.")
             return ("reply", self._render(user_id, space, name, header=head))
 
@@ -125,9 +126,20 @@ class ShoppingManager:
         if not items:
             return ("reply", "I didn’t catch an item + price. Try “ginger 500, milk 1200”.")
         for it in items:
-            self.db.add_shopping_item(user_id, space, name, it["item"], it["amount"], it["currency"])
-        added = ", ".join(f"{i['item']} {format_amount(i['amount'], i['currency'])}" for i in items)
+            self.db.add_shopping_item(user_id, space, name, it["item"], it["amount"], it["currency"], it["quantity"])
+        added = ", ".join(self._item_label(i) for i in items)
         return ("reply", self._render(user_id, space, name, header=f"➕ Added {added}"))
+
+    @staticmethod
+    def _qty_str(qty: float) -> str:
+        return str(int(qty)) if float(qty).is_integer() else f"{qty:g}"
+
+    def _item_label(self, it: Dict[str, Any]) -> str:
+        qty = it.get("quantity") or 1
+        line = (it["amount"] or 0) * qty
+        if qty != 1:
+            return f"{self._qty_str(qty)}× {it['item']} {format_amount(line, it['currency'])}"
+        return f"{it['item']} {format_amount(it['amount'] or 0, it['currency'])}"
 
     def _looks_like_items(self, low: str) -> bool:
         # Has a number, and no expense/question/command verbs.
@@ -140,6 +152,7 @@ class ShoppingManager:
     def _parse_items(self, text: str, default_cur: str) -> List[Dict[str, Any]]:
         items: List[Dict[str, Any]] = []
         for part in re.split(r"[,;]|\band\b|\bplus\b", text, flags=re.IGNORECASE):
+            qty, part = self._extract_qty(part)
             m = re.search(r"([£$€₦])?\s*(\d[\d,]*(?:\.\d+)?)\s*(naira|pounds?|dollars?|euros?|gbp|usd|ngn|eur)?",
                           part, re.IGNORECASE)
             if not m:
@@ -148,8 +161,29 @@ class ShoppingManager:
             cur = SYMBOL_MAP.get(m.group(1) or "") or WORD_MAP.get((m.group(3) or "").lower()) or default_cur
             name = self._clean_name(part[: m.start()] + " " + part[m.end():])
             if name:
-                items.append({"item": name, "amount": amt, "currency": cur})
+                items.append({"item": name, "amount": amt, "currency": cur, "quantity": qty})
         return items
+
+    @staticmethod
+    def _extract_qty(part: str) -> Tuple[float, str]:
+        """Pull a leading/trailing quantity off an item phrase.
+
+        Handles "3 ginger at 250", "2x ginger 250", "ginger x2 250". Returns
+        (quantity, remaining_text); defaults to 1 and leaves the text untouched.
+        """
+        # "2x ginger" / "2 x ginger" at the start.
+        m = re.match(r"\s*(\d+)\s*x\b\s*", part, re.IGNORECASE)
+        if m:
+            return float(m.group(1)), part[m.end():]
+        # "ginger x2" anywhere.
+        m = re.search(r"\bx\s*(\d+)\b", part, re.IGNORECASE)
+        if m:
+            return float(m.group(1)), part[: m.start()] + " " + part[m.end():]
+        # Leading count immediately followed by a word: "3 ginger ...".
+        m = re.match(r"\s*(\d+)\s+(?=[a-zA-Z])", part)
+        if m:
+            return float(m.group(1)), part[m.end():]
+        return 1.0, part
 
     @staticmethod
     def _clean_name(text: str) -> str:
@@ -184,9 +218,15 @@ class ShoppingManager:
             return "\n".join(lines)
         totals: Dict[str, float] = defaultdict(float)
         for it in items:
-            amt, cur = it.get("amount") or 0, it.get("currency", "GBP")
-            totals[cur] += amt
-            lines.append(f"  • {it['item']:<18} {format_amount(amt, cur)}")
+            unit, cur = it.get("amount") or 0, it.get("currency", "GBP")
+            qty = it.get("quantity") or 1
+            line_total = unit * qty
+            totals[cur] += line_total
+            if qty != 1:
+                label = f"{self._qty_str(qty)}× {it['item']}"
+                lines.append(f"  • {label:<18} {format_amount(line_total, cur)}  ({format_amount(unit, cur)} ea)")
+            else:
+                lines.append(f"  • {it['item']:<18} {format_amount(line_total, cur)}")
         lines.append("  " + "─" * 26)
         lines.append("  Estimated  " + " · ".join(format_amount(v, k) for k, v in totals.items()))
         lines.append("\nSay “done” to save, or “bought " + name + "” when you’ve paid.")

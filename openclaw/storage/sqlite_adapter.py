@@ -84,7 +84,8 @@ CREATE TABLE IF NOT EXISTS shopping_items (
     space       TEXT DEFAULT 'Personal',
     list_name   TEXT NOT NULL,
     item        TEXT NOT NULL,
-    amount      REAL,                   -- price (estimated until bought)
+    amount      REAL,                   -- unit price (estimated until bought)
+    quantity    REAL DEFAULT 1,         -- how many units
     currency    TEXT DEFAULT 'GBP',
     created_at  REAL NOT NULL
 );
@@ -144,6 +145,11 @@ class SQLiteAdapter:
             conn.execute("ALTER TABLE user_prefs ADD COLUMN briefing_enabled INTEGER DEFAULT 0")
         if pcols and "active_list" not in pcols:
             conn.execute("ALTER TABLE user_prefs ADD COLUMN active_list TEXT")
+
+        # shopping_items gained a per-item quantity.
+        scols = {row["name"] for row in conn.execute("PRAGMA table_info(shopping_items)")}
+        if scols and "quantity" not in scols:
+            conn.execute("ALTER TABLE shopping_items ADD COLUMN quantity REAL DEFAULT 1")
 
     @contextmanager
     def _conn(self):
@@ -562,14 +568,15 @@ class SQLiteAdapter:
             )
 
     def add_shopping_item(self, user_id: str, space: str, list_name: str,
-                          item: str, amount: Optional[float], currency: str = "GBP") -> None:
+                          item: str, amount: Optional[float], currency: str = "GBP",
+                          quantity: float = 1) -> None:
         import secrets
         import time
         with self._conn() as conn:
             conn.execute(
-                "INSERT INTO shopping_items (id, user_id, space, list_name, item, amount, currency, created_at) "
-                "VALUES (?,?,?,?,?,?,?,?)",
-                (secrets.token_hex(8), user_id, space, list_name, item, amount, currency, time.time()),
+                "INSERT INTO shopping_items (id, user_id, space, list_name, item, amount, quantity, currency, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                (secrets.token_hex(8), user_id, space, list_name, item, amount, quantity, currency, time.time()),
             )
 
     def get_shopping_items(self, user_id: str, space: str, list_name: str) -> List[Dict[str, Any]]:
@@ -584,7 +591,7 @@ class SQLiteAdapter:
     def list_shopping_lists(self, user_id: str, space: str) -> List[Dict[str, Any]]:
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT list_name, COUNT(*) AS n, COALESCE(SUM(amount),0) AS total "
+                "SELECT list_name, COUNT(*) AS n, COALESCE(SUM(amount * COALESCE(quantity, 1)),0) AS total "
                 "FROM shopping_items WHERE user_id=? AND COALESCE(space,'Personal')=? GROUP BY list_name",
                 (user_id, space),
             ).fetchall()

@@ -63,6 +63,24 @@ class TestShoppingFlow:
         assert recs[0]["amount"] == pytest.approx(2500.0)
         assert recs[0]["entities"]["category"] == "Groceries"
 
+    def test_per_item_quantity(self, orch):
+        orch.process("start a chai list")
+        r = orch.process("3 ginger at 250, milk 1200")
+        assert r.success
+        items = {i["item"]: i for i in _items(orch, "Chai")}
+        assert items["Ginger"]["quantity"] == 3
+        assert items["Ginger"]["amount"] == 250          # stored as unit price
+        assert items["Milk"]["quantity"] == 1
+        # buying logs unit*qty: 3*250 + 1200 = 1950
+        orch.process("bought chai")
+        recs = orch._storage().query_records(domain="finance", record_type="expense", user_id="default")
+        assert recs[0]["amount"] == pytest.approx(1950.0)
+
+    def test_quantity_x_notation(self, orch):
+        orch.process("start a chai list")
+        orch.process("ginger x2 250")
+        assert _items(orch, "Chai")[0]["quantity"] == 2
+
     def test_clear_list(self, orch):
         orch.process("start a chai list: ginger 500")
         r = orch.process("clear chai list")
