@@ -69,8 +69,22 @@ class ShoppingManager:
                                    "amount": (i["amount"] or 0) * (i.get("quantity") or 1),
                                    "currency": i.get("currency", "GBP")} for i in items])
 
+        # Remove a single item: "remove milk from the chai list".
+        if re.search(r"\b(remove|drop|delete|take\s+off|take\s+out)\b", low):
+            name = self._name_in(message, user_id, space) or active
+            if name:
+                body = re.sub(r"\b(remove|drop|delete|take\s+off|take\s+out|from|off|out\s+of)\b",
+                              " ", message, flags=re.IGNORECASE)
+                kw = self._clean_name(self._strip_list_ref(body, name))
+                if kw:
+                    self.db.set_active_list(user_id, name)
+                    removed = self.db.delete_shopping_item(user_id, space, name, kw)
+                    if removed:
+                        return ("reply", self._render(user_id, space, name, header=f"➖ Removed {removed}"))
+                    return ("reply", f"I couldn’t find “{kw}” on “{name}”.")
+
         # Clear / delete a list.
-        if re.search(r"\b(clear|empty|delete|cancel|scrap)\b.*\blist\b", low):
+        if re.search(r"\b(clear|empty|delete|cancel|scrap|remove)\b.*\blist\b", low):
             name = self._name_in(message, user_id, space) or active
             if name:
                 n = self.db.clear_shopping_list(user_id, space, name)

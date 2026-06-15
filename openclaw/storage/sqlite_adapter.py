@@ -611,6 +611,20 @@ class SQLiteAdapter:
             conn.execute("UPDATE shopping_items SET amount=? WHERE id=?", (amount, row["id"]))
             return row["item"]
 
+    def delete_shopping_item(self, user_id: str, space: str, list_name: str,
+                             item_keyword: str) -> Optional[str]:
+        """Delete the most recent item matching a keyword. Returns its name."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT id, item FROM shopping_items WHERE user_id=? AND COALESCE(space,'Personal')=? "
+                "AND lower(list_name)=lower(?) AND lower(item) LIKE ? ORDER BY created_at DESC LIMIT 1",
+                (user_id, space, list_name, f"%{item_keyword.lower()}%"),
+            ).fetchone()
+            if not row:
+                return None
+            conn.execute("DELETE FROM shopping_items WHERE id=?", (row["id"],))
+            return row["item"]
+
     def clear_shopping_list(self, user_id: str, space: str, list_name: str) -> int:
         with self._conn() as conn:
             cur = conn.execute(

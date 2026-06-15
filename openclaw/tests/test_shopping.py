@@ -88,6 +88,15 @@ class TestShoppingFlow:
         orch.process("ginger x2 250")
         assert _items(orch, "Chai")[0]["quantity"] == 2
 
+    def test_remove_single_item(self, orch):
+        orch.process("start a chai list: ginger 500, milk 1200, cardamom 800")
+        r = orch.process("remove milk from the chai list")
+        assert r.success and "Removed" in r.response
+        names = {i["item"] for i in _items(orch, "Chai")}
+        assert names == {"Ginger", "Cardamom"}
+        # not misrouted to an expense/inventory record
+        assert orch._storage().query_records(user_id="default") == []
+
     def test_clear_list(self, orch):
         orch.process("start a chai list: ginger 500")
         r = orch.process("clear chai list")
