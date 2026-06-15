@@ -22,6 +22,21 @@ from openclaw.utils.currency_normalizer import SYMBOL_MAP, WORD_MAP, format_amou
 # A signal back to the orchestrator: ("reply", text) | ("buy", list_name, items)
 Signal = Tuple[str, ...]
 
+# Canonical categories an item can be tagged with, e.g. "phone charger 5000 [shopping]".
+_CATEGORY_TAGS = {
+    "groceries": "Groceries", "grocery": "Groceries",
+    "food": "Food & Drink", "drink": "Food & Drink", "drinks": "Food & Drink", "food & drink": "Food & Drink",
+    "transport": "Transport", "fare": "Transport", "fuel": "Transport", "transportation": "Transport",
+    "utilities": "Utilities", "utility": "Utilities", "bill": "Utilities", "bills": "Utilities",
+    "shopping": "Shopping", "shop": "Shopping",
+    "entertainment": "Entertainment", "fun": "Entertainment",
+    "marketing": "Marketing", "ads": "Marketing",
+    "health": "Health", "medical": "Health", "medicine": "Health",
+    "education": "Education", "school": "Education",
+    "rent": "Rent",
+    "other": "Other",
+}
+
 _STOP_WORDS = {
     "add", "to", "the", "a", "an", "my", "list", "for", "of", "on", "at", "each",
     "cost", "costs", "is", "was", "now", "about", "around", "approximately", "price",
@@ -67,7 +82,22 @@ class ShoppingManager:
             self.db.set_active_list(user_id, None)
             return ("buy", name, [{"item": i["item"],
                                    "amount": (i["amount"] or 0) * (i.get("quantity") or 1),
-                                   "currency": i.get("currency", "GBP")} for i in items])
+                                   "currency": i.get("currency", "GBP"),
+                                   "category": i.get("category")} for i in items])
+
+        # Convert a price-check list into category budgets (no amount given):
+        # "convert the chai list to a budget", "make this my budget".
+        if re.search(r"\bbudget\b", low) and re.search(r"\b(convert|turn|make|use|save|set|into)\b", low) \
+                and self._parse_budget(low) is None:
+            name = active or self._name_in(message, user_id, space)
+            if name:
+                items = self.db.get_shopping_items(user_id, space, name)
+                if not items:
+                    return ("reply", f"Your “{name}” list is empty.")
+                return ("budget", name, [{"item": i["item"],
+                                          "amount": (i["amount"] or 0) * (i.get("quantity") or 1),
+                                          "currency": i.get("currency", "GBP"),
+                                          "category": i.get("category")} for i in items])
 
         # Remove a single item: "remove milk from the chai list".
         if re.search(r"\b(remove|drop|delete|take\s+off|take\s+out)\b", low):
@@ -109,7 +139,7 @@ class ShoppingManager:
             inline = re.sub(r"\bbudget\b.*$", "", inline, flags=re.IGNORECASE)
             items = self._parse_items(inline, self.currency_fn(user_id, space))
             for it in items:
-                self.db.add_shopping_item(user_id, space, name, it["item"], it["amount"], it["currency"], it["quantity"])
+                self.db.add_shopping_item(user_id, space, name, it["item"], it["amount"], it["currency"], it["quantity"], it.get("category"))
             head = f"🛒 Started “{name}”." + ("" if items else " Add items like “ginger 500, milk 1200”, then say “done”.")
             return ("reply", self._render(user_id, space, name, header=head))
 
@@ -243,6 +273,7 @@ class ShoppingManager:
     def _parse_items(self, text: str, default_cur: str) -> List[Dict[str, Any]]:
         items: List[Dict[str, Any]] = []
         for part in re.split(r"[,;]|\band\b|\bplus\b", text, flags=re.IGNORECASE):
+            category, part = self._extract_category(part)
             qty, part = self._extract_qty(part)
             m = re.search(r"([£$€₦])?\s*(\d[\d,]*(?:\.\d+)?)\s*(naira|pounds?|dollars?|euros?|gbp|usd|ngn|eur)?",
                           part, re.IGNORECASE)
@@ -252,8 +283,20 @@ class ShoppingManager:
             cur = SYMBOL_MAP.get(m.group(1) or "") or WORD_MAP.get((m.group(3) or "").lower()) or default_cur
             name = self._clean_name(part[: m.start()] + " " + part[m.end():])
             if name:
-                items.append({"item": name, "amount": amt, "currency": cur, "quantity": qty})
+                items.append({"item": name, "amount": amt, "currency": cur,
+                              "quantity": qty, "category": category})
         return items
+
+    @staticmethod
+    def _extract_category(part: str) -> Tuple[Optional[str], str]:
+        """Pull an explicit category tag — "[shopping]", "(transport)", "#health" —
+        off an item phrase. Returns (canonical_category_or_None, remaining_text)."""
+        for m in re.finditer(r"[\[(]\s*([a-zA-Z &]+?)\s*[\])]|#([a-zA-Z&]+)", part):
+            tag = (m.group(1) or m.group(2) or "").strip().lower()
+            cat = _CATEGORY_TAGS.get(tag)
+            if cat:
+                return cat, part[: m.start()] + " " + part[m.end():]
+        return None, part
 
     @staticmethod
     def _extract_qty(part: str) -> Tuple[float, str]:
@@ -313,11 +356,12 @@ class ShoppingManager:
             qty = it.get("quantity") or 1
             line_total = unit * qty
             totals[cur] += line_total
+            tag = f"  [{it['category']}]" if it.get("category") else ""
             if qty != 1:
                 label = f"{self._qty_str(qty)}× {it['item']}"
-                lines.append(f"  • {label:<18} {format_amount(line_total, cur)}  ({format_amount(unit, cur)} ea)")
+                lines.append(f"  • {label:<18} {format_amount(line_total, cur)}  ({format_amount(unit, cur)} ea){tag}")
             else:
-                lines.append(f"  • {it['item']:<18} {format_amount(line_total, cur)}")
+                lines.append(f"  • {it['item']:<18} {format_amount(line_total, cur)}{tag}")
         lines.append("  " + "─" * 26)
         lines.append("  Estimated  " + " · ".join(format_amount(v, k) for k, v in totals.items()))
         # Trip budget (set inline for this list), compared to the running estimate.

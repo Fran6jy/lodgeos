@@ -119,6 +119,28 @@ class TestShoppingFlow:
         assert by_cat.get("Transport") == pytest.approx(200)   # bus fare
         assert by_cat.get("Groceries") == pytest.approx(500)   # rice (market default)
 
+    def test_explicit_category_tag(self, orch):
+        orch.process("start a trip list: rice 500, phone charger 5000 [shopping]")
+        orch.process("bought trip")
+        recs = orch._storage().query_records(domain="finance", record_type="expense", user_id="default")
+        by_cat = {r["entities"]["category"]: r["amount"] for r in recs}
+        assert by_cat.get("Shopping") == pytest.approx(5000)   # tagged
+        assert by_cat.get("Groceries") == pytest.approx(500)   # rice default
+
+    def test_list_to_budget_then_buy(self, orch):
+        orch.process("start a market list: rice 500, bus fare 200 [transport]")
+        r = orch.process("convert the market list to a budget")
+        assert r.success and "budget" in r.response.lower()
+        budgets = {b["category"]: b["amount"]
+                   for b in orch._storage().get_budgets("default", "monthly", space="Personal")}
+        assert budgets.get("Groceries") == pytest.approx(500)
+        assert budgets.get("Transport") == pytest.approx(200)
+        # list still exists for later
+        assert len(_items(orch, "Market")) == 2
+        # now buy it → expenses logged, list cleared
+        orch.process("bought market")
+        assert _items(orch, "Market") == []
+
     def test_finance_budget_not_hijacked_by_list(self, orch):
         # An open list must not swallow a real category-budget command.
         orch.process("start a chai list: ginger 500")

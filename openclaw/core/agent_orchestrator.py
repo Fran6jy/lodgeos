@@ -109,25 +109,49 @@ class AgentOrchestrator:
         if kind == "buy":
             _, list_name, items = signal
             return self._buy_list(list_name, items, user_id, space, start)
+        if kind == "budget":
+            _, list_name, items = signal
+            return self._list_to_budget(list_name, items, user_id, space, start)
         return self._result(False, None, "Couldn't handle that list action.", start)
+
+    @staticmethod
+    def _group_items_by_category(items):
+        """Group shopping items into {(category, currency): {total, items}}.
+
+        Uses an item's explicit category tag when present, else infers from the
+        name; market items with no signal default to Groceries."""
+        from collections import defaultdict
+        from openclaw.domains.finance.finance_plugin import _infer_category
+        groups = defaultdict(lambda: {"total": 0.0, "items": []})
+        for it in items:
+            cat = it.get("category") or _infer_category(it.get("item", ""))
+            if cat == "Other":
+                cat = "Groceries"
+            cur = it.get("currency", "GBP")
+            g = groups[(cat, cur)]
+            g["total"] += it.get("amount") or 0
+            g["items"].append(it.get("item", ""))
+        return groups
+
+    def _list_to_budget(self, list_name, items, user_id, space, start):
+        """Turn a price-check list into monthly category budgets (keeps the list)."""
+        groups = self._group_items_by_category(items)
+        for (cat, cur), g in groups.items():
+            self._storage().upsert_budget(user_id, cat, round(g["total"], 2), "monthly",
+                                          currency=cur, space=space or "Personal")
+        breakdown = " · ".join(
+            f"{cat} {format_amount(g['total'], cur)}" for (cat, cur), g in groups.items()
+        )
+        resp = (f"🎯 Set monthly budgets from “{list_name}”: {breakdown}.\n"
+                f"The list is still here — say “bought {list_name}” once you've shopped.")
+        return self._result(True, None, resp, start, domain="finance")
 
     def _buy_list(self, list_name, items, user_id, space, start):
         """Convert a shopping list into expense record(s) — one per (category, currency).
 
         Each item is auto-categorised by name (market items default to Groceries),
         so a mixed trip lands in the right categories instead of all under Groceries."""
-        from collections import defaultdict
-        from openclaw.domains.finance.finance_plugin import _infer_category
-
-        groups = defaultdict(lambda: {"total": 0.0, "items": []})  # (category, currency) -> ...
-        for it in items:
-            cat = _infer_category(it.get("item", ""))
-            if cat == "Other":
-                cat = "Groceries"  # a market list is groceries unless the item says otherwise
-            cur = it.get("currency", "GBP")
-            g = groups[(cat, cur)]
-            g["total"] += it.get("amount") or 0
-            g["items"].append(it.get("item", ""))
+        groups = self._group_items_by_category(items)
 
         records = []
         for (cat, cur), g in groups.items():

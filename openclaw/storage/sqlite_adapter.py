@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS shopping_items (
     item        TEXT NOT NULL,
     amount      REAL,                   -- unit price (estimated until bought)
     quantity    REAL DEFAULT 1,         -- how many units
+    category    TEXT,                   -- optional explicit category tag
     currency    TEXT DEFAULT 'GBP',
     created_at  REAL NOT NULL
 );
@@ -152,6 +153,8 @@ class SQLiteAdapter:
         scols = {row["name"] for row in conn.execute("PRAGMA table_info(shopping_items)")}
         if scols and "quantity" not in scols:
             conn.execute("ALTER TABLE shopping_items ADD COLUMN quantity REAL DEFAULT 1")
+        if scols and "category" not in scols:
+            conn.execute("ALTER TABLE shopping_items ADD COLUMN category TEXT")
 
     @contextmanager
     def _conn(self):
@@ -587,14 +590,14 @@ class SQLiteAdapter:
 
     def add_shopping_item(self, user_id: str, space: str, list_name: str,
                           item: str, amount: Optional[float], currency: str = "GBP",
-                          quantity: float = 1) -> None:
+                          quantity: float = 1, category: Optional[str] = None) -> None:
         import secrets
         import time
         with self._conn() as conn:
             conn.execute(
-                "INSERT INTO shopping_items (id, user_id, space, list_name, item, amount, quantity, currency, created_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?)",
-                (secrets.token_hex(8), user_id, space, list_name, item, amount, quantity, currency, time.time()),
+                "INSERT INTO shopping_items (id, user_id, space, list_name, item, amount, quantity, category, currency, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (secrets.token_hex(8), user_id, space, list_name, item, amount, quantity, category, currency, time.time()),
             )
 
     def get_shopping_items(self, user_id: str, space: str, list_name: str) -> List[Dict[str, Any]]:
