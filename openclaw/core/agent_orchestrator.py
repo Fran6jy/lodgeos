@@ -108,6 +108,45 @@ class AgentOrchestrator:
         re.IGNORECASE,
     )
 
+    def _try_budget_intent(self, message: str, user_id: str, space: str, start: float):
+        """Set a budget from plain language ("set budget for tea 50"). Returns a
+        ProcessingResult if it's a budget command, else None (so it isn't recorded
+        as an expense). Asks for the amount if none was given."""
+        low = message.lower()
+        if "budget" not in low:
+            return None
+        # Must look like *setting* a budget, not a query (questions are filtered upstream).
+        if not (re.search(r"\bset\b", low) or re.search(r"budget\b[^.?]*\bfor\b", low)
+                or re.search(r"\bbudget\b[^.?]*[£$€₦]?\d", low)):
+            return None
+
+        from openclaw.utils.currency_normalizer import extract_amount_and_currency
+        amount, currency = extract_amount_and_currency(message, "GBP")
+
+        # Category = the message stripped of amounts and budget keywords.
+        cat_src = re.sub(r"[£$€₦]?\s*\d[\d,]*(?:\.\d+)?", " ", message)
+        cat_src = re.sub(
+            r"\b(set|setup|create|a|an|my|the|please|monthly|weekly|month|week|budget|budgets|"
+            r"for|of|to|is|are|on|at|limit|cap|naira|pounds?|dollars?|euros?|gbp|usd|ngn|eur|"
+            r"amount|amounts|not|known|yet)\b", " ", cat_src, flags=re.IGNORECASE)
+        cat_src = re.sub(r"[^a-zA-Z &]", " ", cat_src)
+        category = " ".join(w for w in cat_src.split() if len(w) >= 2).strip().title()
+        if not category:
+            return None
+
+        plugin = self.router._registry.get("finance")
+        if plugin is None:
+            return None
+        if amount is None:
+            return self._result(
+                False, None,
+                f"🎯 Sure — what monthly limit for {category}? e.g. “set {category} budget to 50”.",
+                start)
+        plugin.set_budget(category, amount, "monthly", user_id=user_id, space=space)
+        scope = f" · {space}" if space and space != "Personal" else ""
+        return self._result(
+            True, None, f"🎯 Budget set: {category} — {format_amount(amount, currency)} per month{scope}", start)
+
     def _is_multi_item(self, message: str) -> bool:
         """True if the message looks like several transactions (a list, or 2+ amounts)."""
         lines = [l for l in message.splitlines() if re.search(r"\d", l)]
@@ -214,6 +253,11 @@ class AgentOrchestrator:
                     start,
                     pending={"action": "VOID_ALL", "space": space, "count": count, "candidates": []},
                 )
+
+            # Step 0a2: Natural-language budget setting ("set budget for tea 50").
+            budget_result = self._try_budget_intent(message, user_id, space, start)
+            if budget_result is not None:
+                return budget_result
 
             # Step 0b: Multiple transactions in one message (a list, or a spoken
             # paragraph with several amounts) → record each separately.
