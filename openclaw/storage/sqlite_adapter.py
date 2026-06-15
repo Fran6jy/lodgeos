@@ -17,7 +17,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +145,8 @@ class SQLiteAdapter:
             conn.execute("ALTER TABLE user_prefs ADD COLUMN briefing_enabled INTEGER DEFAULT 0")
         if pcols and "active_list" not in pcols:
             conn.execute("ALTER TABLE user_prefs ADD COLUMN active_list TEXT")
+        if pcols and "active_list_budget" not in pcols:
+            conn.execute("ALTER TABLE user_prefs ADD COLUMN active_list_budget REAL")
 
         # shopping_items gained a per-item quantity.
         scols = {row["name"] for row in conn.execute("PRAGMA table_info(shopping_items)")}
@@ -566,6 +568,22 @@ class SQLiteAdapter:
                 "ON CONFLICT(user_id) DO UPDATE SET active_list = excluded.active_list",
                 (user_id, list_name),
             )
+            # Closing a list clears its trip budget.
+            if list_name is None:
+                conn.execute("UPDATE user_prefs SET active_list_budget = NULL WHERE user_id = ?", (user_id,))
+
+    def get_active_list_budget(self, user_id: str) -> Optional[float]:
+        with self._conn() as conn:
+            row = conn.execute("SELECT active_list_budget FROM user_prefs WHERE user_id = ?", (user_id,)).fetchone()
+        return row["active_list_budget"] if row and row["active_list_budget"] is not None else None
+
+    def set_active_list_budget(self, user_id: str, amount: Optional[float]) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO user_prefs (user_id, active_list_budget) VALUES (?, ?) "
+                "ON CONFLICT(user_id) DO UPDATE SET active_list_budget = excluded.active_list_budget",
+                (user_id, amount),
+            )
 
     def add_shopping_item(self, user_id: str, space: str, list_name: str,
                           item: str, amount: Optional[float], currency: str = "GBP",
@@ -610,6 +628,28 @@ class SQLiteAdapter:
                 return None
             conn.execute("UPDATE shopping_items SET amount=? WHERE id=?", (amount, row["id"]))
             return row["item"]
+
+    def update_shopping_quantity(self, user_id: str, space: str, list_name: str,
+                                 item_keyword: str, qty: Optional[float] = None,
+                                 delta: Optional[float] = None) -> Optional[Tuple[str, float]]:
+        """Set or adjust the quantity of the most recent matching item.
+
+        Pass `qty` to set an absolute count, or `delta` to add/subtract. The
+        quantity is floored at 1. Returns (item_name, new_qty) or None if no match.
+        """
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT id, item, COALESCE(quantity, 1) AS quantity FROM shopping_items "
+                "WHERE user_id=? AND COALESCE(space,'Personal')=? AND lower(list_name)=lower(?) "
+                "AND lower(item) LIKE ? ORDER BY created_at DESC LIMIT 1",
+                (user_id, space, list_name, f"%{item_keyword.lower()}%"),
+            ).fetchone()
+            if not row:
+                return None
+            new_qty = qty if qty is not None else (row["quantity"] + (delta or 0))
+            new_qty = max(1, new_qty)
+            conn.execute("UPDATE shopping_items SET quantity=? WHERE id=?", (new_qty, row["id"]))
+            return row["item"], new_qty
 
     def delete_shopping_item(self, user_id: str, space: str, list_name: str,
                              item_keyword: str) -> Optional[str]:

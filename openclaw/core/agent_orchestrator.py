@@ -112,29 +112,46 @@ class AgentOrchestrator:
         return self._result(False, None, "Couldn't handle that list action.", start)
 
     def _buy_list(self, list_name, items, user_id, space, start):
-        """Convert a shopping list into expense record(s) — one per currency."""
+        """Convert a shopping list into expense record(s) — one per (category, currency).
+
+        Each item is auto-categorised by name (market items default to Groceries),
+        so a mixed trip lands in the right categories instead of all under Groceries."""
         from collections import defaultdict
-        by_cur = defaultdict(float)
+        from openclaw.domains.finance.finance_plugin import _infer_category
+
+        groups = defaultdict(lambda: {"total": 0.0, "items": []})  # (category, currency) -> ...
         for it in items:
-            by_cur[it.get("currency", "GBP")] += it.get("amount") or 0
+            cat = _infer_category(it.get("item", ""))
+            if cat == "Other":
+                cat = "Groceries"  # a market list is groceries unless the item says otherwise
+            cur = it.get("currency", "GBP")
+            g = groups[(cat, cur)]
+            g["total"] += it.get("amount") or 0
+            g["items"].append(it.get("item", ""))
+
         records = []
-        for cur, total in by_cur.items():
+        for (cat, cur), g in groups.items():
+            names = ", ".join(g["items"])
             rec = {
-                "domain": "finance", "type": "expense", "amount": round(total, 2), "currency": cur,
-                "description": f"{list_name} shopping ({len(items)} items)",
-                "entities": {"category": "Groceries"}, "raw_input": f"bought {list_name}",
+                "domain": "finance", "type": "expense", "amount": round(g["total"], 2), "currency": cur,
+                "description": f"{list_name}: {names}"[:120],
+                "entities": {"category": cat}, "raw_input": f"bought {list_name}",
                 "confidence": 0.9, "user_id": user_id, "space": space,
                 "timestamp": datetime.now().isoformat(),
             }
             plugin, domain = self.router.route(rec)
             rec["domain"] = domain
             rec = plugin.transform(rec)
+            rec["entities"]["category"] = cat  # keep our deliberate categorisation
             plugin.store(rec)
             self.memory.add(rec)
             records.append(rec)
         self._storage().clear_shopping_list(user_id, space, list_name)
-        total_str = " · ".join(format_amount(v, k) for k, v in by_cur.items())
-        resp = f"✅ Bought “{list_name}” — logged {total_str} to Groceries. List cleared."
+
+        breakdown = " · ".join(
+            f"{cat} {format_amount(g['total'], cur)}" for (cat, cur), g in groups.items()
+        )
+        resp = f"✅ Bought “{list_name}” — logged {breakdown}. List cleared."
         return self._result(bool(records), records[0] if records else None, resp, start, domain="finance")
 
     def _storage(self):

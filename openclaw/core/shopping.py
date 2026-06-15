@@ -100,8 +100,13 @@ class ShoppingManager:
             name = (m2.group(2).strip().title() if m2 else self._name_in(message, user_id, space)) or "Shopping"
             name = self._clean_name(name)
             self.db.set_active_list(user_id, name)
+            budget = self._parse_budget(low)
+            if budget is not None:
+                self.db.set_active_list_budget(user_id, budget)
             # any items mentioned inline (after ':' / 'with' / the word list)
             inline = message.split(":", 1)[1] if ":" in message else re.split(r"\bwith\b|\blist\b", message, flags=re.I)[-1]
+            # don't let a trailing "budget 20000" become an item
+            inline = re.sub(r"\bbudget\b.*$", "", inline, flags=re.IGNORECASE)
             items = self._parse_items(inline, self.currency_fn(user_id, space))
             for it in items:
                 self.db.add_shopping_item(user_id, space, name, it["item"], it["amount"], it["currency"], it["quantity"])
@@ -115,6 +120,22 @@ class ShoppingManager:
                 return ("reply", "Add to which list? e.g. “add ginger 500 to chai list”.")
             self.db.set_active_list(user_id, name)
             return self._add(message, user_id, space, name)
+
+        # Set the trip budget for the open list: "budget 20000", "set the budget to 20000".
+        # Guarded so finance budgets ("set tea budget to 50") still go to the parser.
+        if active and re.search(r"(?:^|\b(?:set|the|my|a|our|trip|list|shopping|market)\s+)budget\b", low):
+            budget = self._parse_budget(low)
+            if budget is not None:
+                self.db.set_active_list_budget(user_id, budget)
+                cur = self.currency_fn(user_id, space)
+                return ("reply", self._render(user_id, space, active,
+                                              header=f"🎯 Budget for “{active}” set to {format_amount(budget, cur)}"))
+
+        # Adjust an item's quantity: "make ginger 2", "add 2 more ginger", "1 less milk".
+        if active:
+            edit = self._try_qty_edit(low, user_id, space, active)
+            if edit:
+                return edit
 
         # Update a price: "ginger is actually 700"
         if active:
@@ -136,13 +157,57 @@ class ShoppingManager:
     # -- helpers ------------------------------------------------------------
 
     def _add(self, message: str, user_id: str, space: str, name: str) -> Signal:
-        items = self._parse_items(self._strip_list_ref(message, name), self.currency_fn(user_id, space))
+        # Drop a leading verb ("add 2 tomatoes 200") so it can't shadow the quantity.
+        body = re.sub(r"^\s*(?:add|get|buy|need|want|grab|put|include)\s+", " ", message, flags=re.IGNORECASE)
+        items = self._parse_items(self._strip_list_ref(body, name), self.currency_fn(user_id, space))
         if not items:
             return ("reply", "I didn’t catch an item + price. Try “ginger 500, milk 1200”.")
         for it in items:
             self.db.add_shopping_item(user_id, space, name, it["item"], it["amount"], it["currency"], it["quantity"])
         added = ", ".join(self._item_label(i) for i in items)
         return ("reply", self._render(user_id, space, name, header=f"➕ Added {added}"))
+
+    @staticmethod
+    def _parse_budget(low: str) -> Optional[float]:
+        m = re.search(r"\bbudget\b[^0-9£$€₦]{0,10}([£$€₦]?\d[\d,]*(?:\.\d+)?)", low)
+        if not m:
+            m = re.search(r"([£$€₦]?\d[\d,]*(?:\.\d+)?)\s*budget\b", low)
+        if not m:
+            return None
+        return float(re.sub(r"[£$€₦,]", "", m.group(1)))
+
+    def _try_qty_edit(self, low: str, user_id: str, space: str, name: str) -> Optional[Signal]:
+        # increment: "add 2 more ginger" / "2 more ginger"
+        m = re.search(r"\b(?:add\s+)?(\d+)\s+more\s+([a-z][a-z ]*)", low)
+        if m:
+            return self._apply_qty(user_id, space, name, m.group(2), delta=float(m.group(1)))
+        # "another ginger" / "one more ginger"
+        m = re.search(r"\b(?:another|one\s+more)\s+([a-z][a-z ]*)", low)
+        if m:
+            return self._apply_qty(user_id, space, name, m.group(1), delta=1)
+        # decrement: "2 less milk" / "one fewer milk"
+        m = re.search(r"\b(\d+)\s+(?:less|fewer)\s+([a-z][a-z ]*)", low)
+        if m:
+            return self._apply_qty(user_id, space, name, m.group(2), delta=-float(m.group(1)))
+        m = re.search(r"\b(?:one|1)\s+(?:less|fewer)\s+([a-z][a-z ]*)", low)
+        if m:
+            return self._apply_qty(user_id, space, name, m.group(1), delta=-1)
+        # set: "make/set/change ginger to 2" (also "... ginger 2")
+        m = re.search(r"\b(?:make|set|change)\s+([a-z][a-z ]*?)\s+(?:to\s+|qty\s+|quantity\s+|=\s*)?(\d+)\b", low)
+        if m:
+            return self._apply_qty(user_id, space, name, m.group(1), qty=float(m.group(2)))
+        return None
+
+    def _apply_qty(self, user_id: str, space: str, name: str, kw_raw: str,
+                   qty: Optional[float] = None, delta: Optional[float] = None) -> Optional[Signal]:
+        kw = self._clean_name(kw_raw)
+        if not kw:
+            return None
+        res = self.db.update_shopping_quantity(user_id, space, name, kw, qty=qty, delta=delta)
+        if not res:
+            return ("reply", f"I couldn’t find “{kw}” on “{name}”.")
+        item, new_qty = res
+        return ("reply", self._render(user_id, space, name, header=f"🔢 {item} × {self._qty_str(new_qty)}"))
 
     @staticmethod
     def _strip_list_ref(message: str, name: str) -> str:
@@ -255,6 +320,17 @@ class ShoppingManager:
                 lines.append(f"  • {it['item']:<18} {format_amount(line_total, cur)}")
         lines.append("  " + "─" * 26)
         lines.append("  Estimated  " + " · ".join(format_amount(v, k) for k, v in totals.items()))
+        # Trip budget (set inline for this list), compared to the running estimate.
+        budget = self.db.get_active_list_budget(user_id)
+        if budget is not None and self.db.get_active_list(user_id) and \
+                self.db.get_active_list(user_id).lower() == name.lower():
+            cur = self.currency_fn(user_id, space)
+            est = totals.get(cur, sum(totals.values()))
+            left = budget - est
+            if left < 0:
+                lines.append(f"  🎯 Budget {format_amount(budget, cur)} · ⚠️ over by {format_amount(-left, cur)}")
+            else:
+                lines.append(f"  🎯 Budget {format_amount(budget, cur)} · {format_amount(left, cur)} left")
         lines.append("\nSay “done” to save, or “bought " + name + "” when you’ve paid.")
         return "\n".join(lines)
 

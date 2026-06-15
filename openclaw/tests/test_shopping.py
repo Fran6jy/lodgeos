@@ -88,6 +88,45 @@ class TestShoppingFlow:
         orch.process("ginger x2 250")
         assert _items(orch, "Chai")[0]["quantity"] == 2
 
+    def _qty(self, orch, name, item):
+        return next(i["quantity"] for i in _items(orch, name) if i["item"] == item)
+
+    def test_quantity_edit_set_and_increment(self, orch):
+        orch.process("start a chai list: 3 ginger at 250")
+        orch.process("make ginger 2")
+        assert self._qty(orch, "Chai", "Ginger") == 2
+        orch.process("add 3 more ginger")
+        assert self._qty(orch, "Chai", "Ginger") == 5
+        orch.process("2 less ginger")
+        assert self._qty(orch, "Chai", "Ginger") == 3
+
+    def test_inline_trip_budget_and_overflow(self, orch):
+        r = orch.process("start a market list, budget 1000: 3 ginger at 250")
+        assert orch._storage().get_active_list_budget("default") == 1000
+        # 3*250 = 750 estimated → 250 left
+        assert "left" in r.response
+        r2 = orch.process("add 2 tomatoes 200")  # +400 → 1150, over by 150
+        assert "over by" in r2.response
+        # budget cleared once the list is bought
+        orch.process("bought market")
+        assert orch._storage().get_active_list_budget("default") is None
+
+    def test_buy_splits_into_categories(self, orch):
+        orch.process("start a trip list: rice 500, bus fare 200")
+        orch.process("bought trip")
+        recs = orch._storage().query_records(domain="finance", record_type="expense", user_id="default")
+        by_cat = {r["entities"]["category"]: r["amount"] for r in recs}
+        assert by_cat.get("Transport") == pytest.approx(200)   # bus fare
+        assert by_cat.get("Groceries") == pytest.approx(500)   # rice (market default)
+
+    def test_finance_budget_not_hijacked_by_list(self, orch):
+        # An open list must not swallow a real category-budget command.
+        orch.process("start a chai list: ginger 500")
+        r = orch.process("set tea budget to 50")
+        assert "budget" in r.response.lower()
+        # the trip budget was NOT set from this
+        assert orch._storage().get_active_list_budget("default") is None
+
     def test_remove_single_item(self, orch):
         orch.process("start a chai list: ginger 500, milk 1200, cardamom 800")
         r = orch.process("remove milk from the chai list")
