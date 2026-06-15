@@ -322,6 +322,14 @@ async def dashboard_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                                     reply_markup=ui.back_kb(), disable_web_page_preview=True)
 
 
+async def lists_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show the user's shopping / price lists."""
+    orch, fp = _get_orchestrator()
+    uid = str(update.effective_user.id)
+    text = orch.shopping._render_all(uid, fp.db.get_active_space(uid))
+    await update.message.reply_text(text, reply_markup=ui.back_kb())
+
+
 async def insights_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _, fp = _get_orchestrator()
     uid = str(update.effective_user.id)
@@ -730,6 +738,7 @@ def main():
     app.add_handler(CommandHandler("spaces", spaces_handler))
     app.add_handler(CommandHandler("space", space_set_handler))
     app.add_handler(CommandHandler("insights", insights_handler))
+    app.add_handler(CommandHandler("lists", lists_handler))
     app.add_handler(CommandHandler("subscriptions", subscriptions_handler))
     app.add_handler(CommandHandler("donate", donate_handler))
     app.add_handler(CommandHandler("reminders", reminders_handler))

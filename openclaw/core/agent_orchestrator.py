@@ -68,6 +68,7 @@ class AgentOrchestrator:
         self.parser = IntentParser(llm_client)
         self.corrector = CorrectionDetector(llm_client)
         self.doc_parser = DocumentParser(vision_client) if vision_client else None
+        self._shopping = None
         self.validator = SchemaValidator()
         self.router = router
         self.memory = memory or MemoryStore()
@@ -89,6 +90,52 @@ class AgentOrchestrator:
             if prefix.lower() in known and prefix.lower() not in _SPACE_PREFIX_STOPLIST:
                 return known[prefix.lower()], m.group(2).strip()
         return active, message
+
+    @property
+    def shopping(self):
+        if self._shopping is None:
+            from openclaw.core.shopping import ShoppingManager
+            fin = self.router._registry.get("finance")
+            self._shopping = ShoppingManager(
+                self._storage(),
+                lambda u, s: fin._user_currency(u, s) if fin else "GBP",
+            )
+        return self._shopping
+
+    def _handle_shopping_signal(self, signal, user_id, space, start):
+        kind = signal[0]
+        if kind == "reply":
+            return self._result(True, None, signal[1], start)
+        if kind == "buy":
+            _, list_name, items = signal
+            return self._buy_list(list_name, items, user_id, space, start)
+        return self._result(False, None, "Couldn't handle that list action.", start)
+
+    def _buy_list(self, list_name, items, user_id, space, start):
+        """Convert a shopping list into expense record(s) — one per currency."""
+        from collections import defaultdict
+        by_cur = defaultdict(float)
+        for it in items:
+            by_cur[it.get("currency", "GBP")] += it.get("amount") or 0
+        records = []
+        for cur, total in by_cur.items():
+            rec = {
+                "domain": "finance", "type": "expense", "amount": round(total, 2), "currency": cur,
+                "description": f"{list_name} shopping ({len(items)} items)",
+                "entities": {"category": "Groceries"}, "raw_input": f"bought {list_name}",
+                "confidence": 0.9, "user_id": user_id, "space": space,
+                "timestamp": datetime.now().isoformat(),
+            }
+            plugin, domain = self.router.route(rec)
+            rec["domain"] = domain
+            rec = plugin.transform(rec)
+            plugin.store(rec)
+            self.memory.add(rec)
+            records.append(rec)
+        self._storage().clear_shopping_list(user_id, space, list_name)
+        total_str = " · ".join(format_amount(v, k) for k, v in by_cur.items())
+        resp = f"✅ Bought “{list_name}” — logged {total_str} to Groceries. List cleared."
+        return self._result(bool(records), records[0] if records else None, resp, start, domain="finance")
 
     def _storage(self):
         """Return a storage adapter from any registered plugin that has one."""
@@ -253,6 +300,13 @@ class AgentOrchestrator:
                     start,
                     pending={"action": "VOID_ALL", "space": space, "count": count, "candidates": []},
                 )
+
+            # Step 0a1: Shopping / price lists ("start a chai list", "bought chai",
+            # or bare items while a list is open). Checked before recording so list
+            # items aren't logged as expenses.
+            shop_signal = self.shopping.handle(message, user_id, space)
+            if shop_signal is not None:
+                return self._handle_shopping_signal(shop_signal, user_id, space, start)
 
             # Step 0a2: Natural-language budget setting ("set budget for tea 50").
             budget_result = self._try_budget_intent(message, user_id, space, start)

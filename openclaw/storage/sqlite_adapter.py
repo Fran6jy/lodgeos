@@ -68,7 +68,8 @@ CREATE TABLE IF NOT EXISTS user_prefs (
     active_space     TEXT DEFAULT 'Personal',
     tutorial_done    INTEGER DEFAULT 0,
     digest_enabled   INTEGER DEFAULT 0,
-    briefing_enabled INTEGER DEFAULT 0
+    briefing_enabled INTEGER DEFAULT 0,
+    active_list      TEXT
 );
 
 CREATE TABLE IF NOT EXISTS user_spaces (
@@ -76,6 +77,18 @@ CREATE TABLE IF NOT EXISTS user_spaces (
     space    TEXT NOT NULL,
     UNIQUE(user_id, space)
 );
+
+CREATE TABLE IF NOT EXISTS shopping_items (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    space       TEXT DEFAULT 'Personal',
+    list_name   TEXT NOT NULL,
+    item        TEXT NOT NULL,
+    amount      REAL,                   -- price (estimated until bought)
+    currency    TEXT DEFAULT 'GBP',
+    created_at  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_shopping_list ON shopping_items(user_id, space, list_name);
 """
 
 
@@ -129,6 +142,8 @@ class SQLiteAdapter:
             conn.execute("ALTER TABLE user_prefs ADD COLUMN digest_enabled INTEGER DEFAULT 0")
         if pcols and "briefing_enabled" not in pcols:
             conn.execute("ALTER TABLE user_prefs ADD COLUMN briefing_enabled INTEGER DEFAULT 0")
+        if pcols and "active_list" not in pcols:
+            conn.execute("ALTER TABLE user_prefs ADD COLUMN active_list TEXT")
 
     @contextmanager
     def _conn(self):
@@ -528,6 +543,74 @@ class SQLiteAdapter:
                 "ON CONFLICT(user_id) DO UPDATE SET tutorial_done = 1",
                 (user_id,),
             )
+
+    # -------------------------------------------------------------------------
+    # Shopping / price lists
+    # -------------------------------------------------------------------------
+
+    def get_active_list(self, user_id: str) -> Optional[str]:
+        with self._conn() as conn:
+            row = conn.execute("SELECT active_list FROM user_prefs WHERE user_id = ?", (user_id,)).fetchone()
+        return row["active_list"] if row and row["active_list"] else None
+
+    def set_active_list(self, user_id: str, list_name: Optional[str]) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO user_prefs (user_id, active_list) VALUES (?, ?) "
+                "ON CONFLICT(user_id) DO UPDATE SET active_list = excluded.active_list",
+                (user_id, list_name),
+            )
+
+    def add_shopping_item(self, user_id: str, space: str, list_name: str,
+                          item: str, amount: Optional[float], currency: str = "GBP") -> None:
+        import secrets
+        import time
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO shopping_items (id, user_id, space, list_name, item, amount, currency, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (secrets.token_hex(8), user_id, space, list_name, item, amount, currency, time.time()),
+            )
+
+    def get_shopping_items(self, user_id: str, space: str, list_name: str) -> List[Dict[str, Any]]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM shopping_items WHERE user_id=? AND COALESCE(space,'Personal')=? AND lower(list_name)=lower(?) "
+                "ORDER BY created_at",
+                (user_id, space, list_name),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_shopping_lists(self, user_id: str, space: str) -> List[Dict[str, Any]]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT list_name, COUNT(*) AS n, COALESCE(SUM(amount),0) AS total "
+                "FROM shopping_items WHERE user_id=? AND COALESCE(space,'Personal')=? GROUP BY list_name",
+                (user_id, space),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_shopping_item(self, user_id: str, space: str, list_name: str,
+                             item_keyword: str, amount: float) -> Optional[str]:
+        """Update the price of the most recent item matching a keyword. Returns its name."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT id, item FROM shopping_items WHERE user_id=? AND COALESCE(space,'Personal')=? "
+                "AND lower(list_name)=lower(?) AND lower(item) LIKE ? ORDER BY created_at DESC LIMIT 1",
+                (user_id, space, list_name, f"%{item_keyword.lower()}%"),
+            ).fetchone()
+            if not row:
+                return None
+            conn.execute("UPDATE shopping_items SET amount=? WHERE id=?", (amount, row["id"]))
+            return row["item"]
+
+    def clear_shopping_list(self, user_id: str, space: str, list_name: str) -> int:
+        with self._conn() as conn:
+            cur = conn.execute(
+                "DELETE FROM shopping_items WHERE user_id=? AND COALESCE(space,'Personal')=? AND lower(list_name)=lower(?)",
+                (user_id, space, list_name),
+            )
+            return cur.rowcount
 
     def list_spaces(self, user_id: str) -> List[str]:
         """Spaces this user has used or created, merged with sensible defaults."""

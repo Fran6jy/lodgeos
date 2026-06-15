@@ -204,17 +204,22 @@ def help_text() -> str:
         "• <i>Actually that coffee was £6</i>\n"
         "• <i>Delete the £5 one</i>  (kept for audit, not lost)\n\n"
 
-        "<b>4️⃣ SPACES — keep things separate</b> 🗂\n"
+        "<b>4️⃣ PLAN — price lists for the market</b> 🛒\n"
+        "• <i>start a chai list: ginger 500, milk 1200</i>\n"
+        "• <i>cardamom is actually 700</i> · <i>bought chai</i>\n\n"
+
+        "<b>5️⃣ SPACES — keep things separate</b> 🗂\n"
         "Split Personal / Business / Property so they don't mix:\n"
         "• <i>switch to business space</i>\n"
         "• or tag one entry: <i>Business: spent £30 on ads</i>\n"
         "• new space: <code>/space Side Hustle</code>\n\n"
 
-        "<b>5️⃣ SEE — your numbers</b>\n"
+        "<b>6️⃣ SEE — your numbers</b>\n"
         "/summary · /month — spending\n"
         "/budget · /setbudget &lt;cat&gt; &lt;amt&gt;\n"
         "/income · /history\n"
         "/insights — vs last month · /subscriptions\n"
+        "/lists — your shopping / price lists\n"
         "/dashboard — private web view\n\n"
 
         "💡 <b>Tip:</b> send /menu for tap-buttons — no need to remember commands."
@@ -244,6 +249,7 @@ def bot_commands() -> list:
         BotCommand("income", "💰 Income this month"),
         BotCommand("insights", "💡 Spending insights vs last month"),
         BotCommand("subscriptions", "🔁 Detect recurring charges"),
+        BotCommand("lists", "🛒 Shopping / price lists"),
         BotCommand("reminders", "🔔 Daily digest / morning briefing"),
         BotCommand("digest", "📊 Preview today's digest"),
         BotCommand("history", "🧾 Recent transactions"),
