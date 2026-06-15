@@ -76,6 +76,13 @@ class TestShoppingFlow:
         recs = orch._storage().query_records(domain="finance", record_type="expense", user_id="default")
         assert recs[0]["amount"] == pytest.approx(1950.0)
 
+    def test_add_does_not_leak_list_name_into_item(self, orch):
+        orch.process("start a chai list: ginger 500")
+        orch.process("add star anise to the chai list 100")
+        names = {i["item"] for i in _items(orch, "Chai")}
+        assert "Star Anise" in names
+        assert "Star Anise Chai" not in names
+
     def test_quantity_x_notation(self, orch):
         orch.process("start a chai list")
         orch.process("ginger x2 250")

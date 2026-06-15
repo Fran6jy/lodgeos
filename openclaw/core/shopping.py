@@ -122,13 +122,25 @@ class ShoppingManager:
     # -- helpers ------------------------------------------------------------
 
     def _add(self, message: str, user_id: str, space: str, name: str) -> Signal:
-        items = self._parse_items(message, self.currency_fn(user_id, space))
+        items = self._parse_items(self._strip_list_ref(message, name), self.currency_fn(user_id, space))
         if not items:
             return ("reply", "I didn’t catch an item + price. Try “ginger 500, milk 1200”.")
         for it in items:
             self.db.add_shopping_item(user_id, space, name, it["item"], it["amount"], it["currency"], it["quantity"])
         added = ", ".join(self._item_label(i) for i in items)
         return ("reply", self._render(user_id, space, name, header=f"➕ Added {added}"))
+
+    @staticmethod
+    def _strip_list_ref(message: str, name: str) -> str:
+        """Remove the "to/for the <list> list" clause so the list name doesn't
+        leak into a parsed item (e.g. "add star anise to the chai list 100")."""
+        words = re.escape(name).replace(r"\ ", r"\s+")
+        # "to/for/in/on (the|my) <name> (list)"
+        out = re.sub(rf"\b(?:to|for|in|on)\s+(?:the\s+|my\s+)?{words}(?:\s+list)?\b",
+                     " ", message, flags=re.IGNORECASE)
+        # any leftover bare list-name mention
+        out = re.sub(rf"\b{words}\b", " ", out, flags=re.IGNORECASE)
+        return out
 
     @staticmethod
     def _qty_str(qty: float) -> str:
