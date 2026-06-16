@@ -218,6 +218,23 @@ class AgentOrchestrator:
         spend_verb = bool(re.search(r"\b(spent|spend|paid|bought|buy|withdrew|sent|spending|cost me)\b", low))
         explicit_set = bool(re.search(r"\b(set|setup|create|make)\b[^.?]*\bbudget\b", low))
         conversion = bool(re.search(r"\b(convert|turn|use|save|make)\b", low))
+        delete_verb = bool(re.search(r"\b(delete|void|cancel|remove|undo|drop|scrap|clear)\b", low))
+        query_verb = bool(re.search(r"\b(show|view|see|list|what|whats|how much|check|my budgets?)\b", low))
+
+        # 0a) Delete/void a budget ("delete the food budget").
+        if has_budget and delete_verb:
+            cat = self._budget_name_ref(message, user_id, space)
+            if cat and db and db.delete_budget(user_id, cat, "monthly", space):
+                return {"result": self._result(True, None, f"🗑️ Deleted the {cat} budget.", start, domain="finance")}
+            return {"result": self._result(False, None,
+                    "Which budget should I delete? e.g. “delete the Food budget”.", start)}
+
+        # 0b) Show budgets ("show me my budgets", "what are my budgets").
+        if has_budget and query_verb and amount is None and not explicit_set and not conversion:
+            plugin = self.router._registry.get("finance")
+            if plugin is not None:
+                return {"result": self._result(True, None, plugin._budget_report(user_id, space=space),
+                                               start, domain="finance")}
 
         # 1) Convert a price-check list into category budgets (no amount, no category).
         if has_budget and conversion and amount is None and not budget_for and not mentions_cat:
@@ -299,6 +316,36 @@ class AgentOrchestrator:
         scope = f" · {space}" if space and space != "Personal" else ""
         return self._result(
             True, None, f"🎯 Budget set: {category} — {format_amount(amount, currency)} per month{scope}", start)
+
+    def _budget_name_ref(self, message: str, user_id: str, space: str):
+        """Find which existing budget a message refers to ("delete the food budget"
+        → "Food & Drink"). Returns the budget category name, or None."""
+        db = self._storage()
+        names = sorted((b["category"] for b in (db.get_budgets(user_id, "monthly", space=space) if db else [])),
+                       key=len, reverse=True)
+        if not names:
+            return None
+        low = message.lower()
+        # The phrase before "budget", minus leading verbs/articles.
+        m = re.search(r"(.+?)\s+budget\b", low)
+        cand = m.group(1) if m else low
+        cand = re.sub(r"\b(delete|void|cancel|remove|undo|drop|scrap|clear|the|my|a|an|please|all)\b",
+                      " ", cand)
+        cwords = set(re.findall(r"[a-z]+", cand))
+        for n in names:                                   # exact name appears
+            if re.search(r"\b" + re.escape(n.lower()) + r"\b", low):
+                return n
+        for n in names:                                   # word-subset ("food" → "Food & Drink")
+            nwords = set(re.findall(r"[a-z]+", n.lower()))
+            if cwords and nwords and (cwords <= nwords or nwords <= cwords):
+                return n
+        from openclaw.domains.finance.finance_plugin import _infer_category
+        canonical = _infer_category(cand)                 # "fuel" → "Transport"
+        if canonical != "Other":
+            for n in names:
+                if n.lower() == canonical.lower():
+                    return n
+        return None
 
     def _explicit_category(self, message: str, user_id: str, space: str):
         """Detect an explicit category/budget reference and return
@@ -504,6 +551,16 @@ class AgentOrchestrator:
                     start,
                     pending={"action": "VOID_ALL", "space": space, "count": count, "candidates": []},
                 )
+
+            # Step 0a0: Greeting / smalltalk — reply with a hint, don't record it.
+            if re.fullmatch(r"(hi|hello|hey+|hiya|yo|sup|howdy|greetings|good\s*(morning|afternoon|"
+                            r"evening|day)|thanks?|thank\s*you|ta|cheers|ok|okay|cool|nice|great|"
+                            r"good|👍|🙏)[\s.!?]*", message.strip(), re.IGNORECASE):
+                return self._result(
+                    False, None,
+                    "👋 Hi! Send me an expense like “spent £4 on coffee”, start a shopping list, "
+                    "or set a budget. Tap Menu for options.",
+                    start)
 
             # Step 0a1: Budget router — the single owner of every "budget" message
             # (set / convert-list / trip / log-against). Returns a terminal result,

@@ -441,6 +441,17 @@ class SQLiteAdapter:
                 (str(uuid.uuid4()), user_id, space, category, amount, currency, period, now),
             )
 
+    def delete_budget(self, user_id: str, category: str, period: str = "monthly",
+                      space: str = "Personal") -> int:
+        """Delete a budget by category (case-insensitive). Returns rows removed."""
+        with self._conn() as conn:
+            cur = conn.execute(
+                "DELETE FROM budgets WHERE user_id=? AND COALESCE(space,'Personal')=? "
+                "AND lower(category)=lower(?) AND period=?",
+                (user_id, space, category, period),
+            )
+            return cur.rowcount
+
     def get_budgets(self, user_id: str, period: str = "monthly",
                     space: Optional[str] = None) -> List[Dict[str, Any]]:
         clauses = ["user_id = ?", "period = ?"]

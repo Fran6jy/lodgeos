@@ -177,6 +177,18 @@ class TestShoppingFlow:
         # not misrouted to an expense/inventory record
         assert orch._storage().query_records(user_id="default") == []
 
+    def test_delete_shopping_list_with_word_shopping(self, orch):
+        orch.process("start a chai list: ginger 500")
+        r = orch.process("delete the chai shopping list")
+        assert "Cleared" in r.response
+        assert _items(orch, "Chai") == []
+
+    def test_show_list_does_not_invent_name(self, orch):
+        orch.process("start a chai list: ginger 500")
+        r = orch.process("show me my shopping list")
+        # shows the open Chai list, not a phantom "Show Me"
+        assert "Chai" in r.response and "Show Me" not in r.response
+
     def test_clear_list(self, orch):
         orch.process("start a chai list: ginger 500")
         r = orch.process("clear chai list")

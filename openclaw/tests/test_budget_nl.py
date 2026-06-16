@@ -109,6 +109,35 @@ def test_budget_router_precedence(orch):
     assert any(r["entities"]["category"] == "Tea" and r["amount"] == 25 for r in recs)
 
 
+def test_delete_budget(orch):
+    orch.process("set budget for fuel 200")
+    orch.process("set budget for tea 50")
+    r = orch.process("delete the fuel budget")
+    assert "Deleted" in r.response
+    cats = [b["category"] for b in orch._storage().get_budgets("default", "monthly")]
+    assert cats == ["Tea"]          # only the fuel/Transport budget went
+
+
+def test_delete_budget_unknown_asks(orch):
+    r = orch.process("delete the cinema budget")
+    assert not r.success and "Which budget" in r.response
+
+
+def test_show_budgets_query(orch):
+    orch.process("set budget for food 100")
+    r = orch.process("show me my budgets")
+    assert r.success and "Budget Report" in r.response
+    # not recorded as a note
+    assert orch._storage().query_records(domain="finance", record_type="expense", user_id="default") == []
+
+
+def test_greeting_not_recorded(orch):
+    for g in ("Hello", "Hi", "good morning", "thanks"):
+        r = orch.process(g)
+        assert not r.success and "Hi!" in r.response
+    assert orch._storage().query_records(user_id="default") == []
+
+
 def test_normal_expense_not_hijacked(orch):
     r = orch.process("Spent £5 on a budget airline snack")
     assert r.success

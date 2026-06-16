@@ -64,7 +64,9 @@ class ShoppingManager:
         if re.search(r"\bmy lists\b", low) or re.fullmatch(r"lists?\.?", low):
             return ("reply", self._render_all(user_id, space))
         if re.search(r"\b(show|view|see|what'?s on|open)\b.*\blist\b", low):
-            name = self._name_in(message, user_id, space) or active
+            # Only trust a real list name ("show chai list"); otherwise show the
+            # open list, else all — never invent a name from "show me my … list".
+            name = self._existing_list_in(message, user_id, space) or active
             if name:
                 return ("reply", self._render(user_id, space, name))
             return ("reply", self._render_all(user_id, space))
@@ -89,7 +91,8 @@ class ShoppingManager:
         if re.search(r"\b(remove|drop|delete|take\s+off|take\s+out)\b", low):
             name = self._name_in(message, user_id, space) or active
             if name:
-                body = re.sub(r"\b(remove|drop|delete|take\s+off|take\s+out|from|off|out\s+of)\b",
+                body = re.sub(r"\b(remove|drop|delete|take\s+off|take\s+out|from|off|out\s+of|"
+                              r"shopping|price|grocery|market)\b",
                               " ", message, flags=re.IGNORECASE)
                 kw = self._clean_name(self._strip_list_ref(body, name))
                 if kw:
@@ -340,12 +343,20 @@ class ShoppingManager:
         words = [w for w in re.sub(r"[^a-zA-Z ]", " ", text).split() if w.lower() not in _STOP_WORDS and len(w) >= 2]
         return " ".join(words).strip().title()
 
-    def _name_in(self, message: str, user_id: str, space: str) -> Optional[str]:
+    def _existing_list_in(self, message: str, user_id: str, space: str) -> Optional[str]:
+        """Return an existing list named in the message, else None (no guessing)."""
         low = message.lower()
-        # Prefer an existing list mentioned by name.
         for lst in self.db.list_shopping_lists(user_id, space):
             if re.search(r"\b" + re.escape(lst["list_name"].lower()) + r"\b", low):
                 return lst["list_name"]
+        return None
+
+    def _name_in(self, message: str, user_id: str, space: str) -> Optional[str]:
+        low = message.lower()
+        # Prefer an existing list mentioned by name.
+        hit = self._existing_list_in(message, user_id, space)
+        if hit:
+            return hit
         # "<name> list" pattern.
         m = re.search(r"\b([a-z][a-z ]*?)\s+(?:shopping |price )?list\b", low)
         if m:
