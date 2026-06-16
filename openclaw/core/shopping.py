@@ -132,13 +132,14 @@ class ShoppingManager:
             head = f"🛒 Started “{name}”." + ("" if items else " Add items like “ginger 500, milk 1200”, then say “done”.")
             return ("reply", self._render(user_id, space, name, header=head))
 
-        # Explicit add: "add ginger 500, milk 1200 to chai"
-        if re.search(r"\badd\b.*\bto\b.*\blist\b", low) or (re.search(r"\badd\b", low) and self._name_in(message, user_id, space)):
-            name = self._name_in(message, user_id, space) or active
-            if not name:
-                return ("reply", "Add to which list? e.g. “add ginger 500 to chai list”.")
-            self.db.set_active_list(user_id, name)
-            return self._add(message, user_id, space, name)
+        # Explicit add to a named (possibly new) list: "add ginger 500 to chai",
+        # "add plane ticket 450 to the malta trip". Only fires when a target list is
+        # explicitly named (so "add 2 more ginger" stays a quantity edit).
+        if re.search(r"\badd\b", low):
+            name, item_text = self._add_target(message, user_id, space)
+            if name:
+                self.db.set_active_list(user_id, name)
+                return self._add(item_text, user_id, space, name)
 
         # (Trip budget for the open list is handled by the orchestrator's budget router.)
 
@@ -195,6 +196,32 @@ class ShoppingManager:
         return self._name_in(message, user_id, space)
 
     # -- helpers ------------------------------------------------------------
+
+    def _add_target(self, message: str, user_id: str, space: str):
+        """Resolve the target list for an explicit "add …" message, treating
+        list/trip/basket/cart as list words. Returns (list_name, item_text_without
+        the target clause), or (None, message) when no list is explicitly named —
+        the list may be new (it will be created). Bare "add ginger 500" returns None
+        so it stays a normal in-list add."""
+        # 1. "... to/into/for [the] <name> [shopping] list|trip|basket|cart"
+        m = re.search(r"\b(?:to|into|onto|in|for)\s+(?:the\s+|my\s+|a\s+)?(.+?)\s+"
+                      r"(?:shopping\s+|price\s+|market\s+)?(?:list|trip|basket|cart)\b",
+                      message, re.IGNORECASE)
+        if m:
+            name = self._clean_name(m.group(1))
+            cleaned = message[:m.start()] + " " + message[m.end():]
+            return (name or None), cleaned
+        # 2. An existing list named anywhere ("add ginger 500 to chai").
+        ex = self._existing_list_in(message, user_id, space)
+        if ex:
+            return ex, message      # _add() strips the name from the item text
+        # 3. A bare trailing target ("... to malta").
+        m = re.search(r"\b(?:to|into|for)\s+(?:the\s+|my\s+)?([a-z][a-z ]*?)\s*$", message, re.IGNORECASE)
+        if m:
+            name = self._clean_name(m.group(1))
+            if name:
+                return name, (message[:m.start()] + " " + message[m.end():])
+        return None, message
 
     def _add(self, message: str, user_id: str, space: str, name: str) -> Signal:
         # Drop a leading verb ("add 2 tomatoes 200") so it can't shadow the quantity.

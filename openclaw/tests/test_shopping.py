@@ -177,6 +177,21 @@ class TestShoppingFlow:
         # not misrouted to an expense/inventory record
         assert orch._storage().query_records(user_id="default") == []
 
+    def test_add_to_new_named_trip(self, orch):
+        # "add X to the Malta trip" creates a Malta list and doesn't leak the
+        # list name into the item.
+        orch.process("Add plane ticket 450 to the Malta trip")
+        items = _items(orch, "Malta")
+        assert len(items) == 1
+        assert items[0]["item"] == "Plane Ticket"
+        assert round(items[0]["amount"]) == 450
+
+    def test_add_to_named_trip_ignores_active_list(self, orch):
+        orch.process("start a chai list: ginger 500")
+        orch.process("add plane ticket 450 to the Malta trip")
+        assert {i["item"] for i in _items(orch, "Malta")} == {"Plane Ticket"}
+        assert {i["item"] for i in _items(orch, "Chai")} == {"Ginger"}   # untouched
+
     def test_delete_shopping_list_with_word_shopping(self, orch):
         orch.process("start a chai list: ginger 500")
         r = orch.process("delete the chai shopping list")
