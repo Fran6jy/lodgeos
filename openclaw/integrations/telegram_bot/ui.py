@@ -140,28 +140,37 @@ def card(title: str, body: str = "", *, mono: bool = False) -> str:
 def tutorial(step: int):
     """A short interactive first-run tour. Returns (text, keyboard)."""
     steps = [
-        ("👋 <b>Welcome to LodgeOS!</b>\n────────────────────\n"
-         "I turn what you say into organised money records — no spreadsheets, no forms.\n\n"
-         "Take the 30-second tour?",
-         [[InlineKeyboardButton("Start tour ▶", callback_data="tut|1")],
+        ("👋 <b>Hi! I'm LodgeOS.</b>\n────────────────────\n"
+         "I help you keep track of your money. You just talk to me — like texting a friend.\n\n"
+         "Want a quick look? (about 30 seconds)",
+         [[InlineKeyboardButton("Yes, show me ▶", callback_data="tut|1")],
           [InlineKeyboardButton("Skip", callback_data="tut|done")]]),
 
-        ("<b>Step 1 of 3 · Record anything</b> 💬\n────────────────────\n"
-         "Just tell me what happened — type it, 🎙 say it, or 🧾 snap a receipt.\n\n"
-         "👉 <b>Try it now:</b> send <i>Spent £3 on coffee</i>\n"
-         "(or tap Next to keep reading)",
+        ("<b>1 of 4 · Tell me what you spent</b> 💬\n────────────────────\n"
+         "Type it, 🎙 say it, or 🧾 take a photo of a receipt.\n\n"
+         "👉 <b>Try it:</b> send <i>Spent £3 on coffee</i>\n"
+         "I'll sort it and tick it ✅. (or tap Next)",
          [[InlineKeyboardButton("Next ▶", callback_data="tut|2")]]),
 
-        ("<b>Step 2 of 3 · Ask anything</b> ❓\n────────────────────\n"
-         "I answer from your own records — no guessing:\n"
-         "• <i>How much have I spent this month?</i>\n"
+        ("<b>2 of 4 · Ask me anything</b> ❓\n────────────────────\n"
+         "I only use your own records — no guessing:\n"
+         "• <i>How much did I spend this month?</i>\n"
          "• <i>How much at Tesco?</i>",
          [[InlineKeyboardButton("Next ▶", callback_data="tut|3")]]),
 
-        ("<b>Step 3 of 3 · Keep things separate</b> 🗂\n────────────────────\n"
-         "Personal · Business · Property — kept apart so they don't mix.\n"
-         "Say <i>switch to business space</i>, or tag one entry: <i>Business: spent £30 on ads</i>.\n\n"
-         "That's it — you're ready! 🎉",
+        ("<b>3 of 4 · Lists &amp; budgets</b> 🛒🎯\n────────────────────\n"
+         "Going to the market? Make a list:\n"
+         "<i>start a chai list: 3 ginger at 250, milk 1200</i>\n"
+         "When you've paid: <i>bought chai</i>.\n\n"
+         "Set a spending limit:\n"
+         "<i>Set budget for food 100</i>",
+         [[InlineKeyboardButton("Next ▶", callback_data="tut|4")]]),
+
+        ("<b>4 of 4 · Keep things separate</b> 🗂\n────────────────────\n"
+         "Home money and work money stay apart:\n"
+         "<i>switch to business space</i>, or label one:\n"
+         "<i>Business: spent £30 on ads</i>.\n\n"
+         "That's it — you're ready! 🎉  Tap below anytime.",
          [[InlineKeyboardButton("Open menu 🏠", callback_data="tut|done")]]),
     ]
     step = max(0, min(step, len(steps) - 1))
@@ -176,53 +185,60 @@ def welcome(name: str = "") -> str:
         f"Your money, in plain language.\n"
         f"────────────────────\n"
         f"Hi{hi} 👋  Just talk to me — type, speak, or snap a photo:\n\n"
-        f"💬  <i>“Spent £4.50 at Nero for coffee”</i>\n"
+        f"💬  <i>“Spent £4.50 on coffee”</i>\n"
         f"🎙  a voice note saying what you spent\n"
         f"🧾  a photo of a receipt or payslip\n\n"
-        f"You can also <b>ask</b> — <i>“how much did I spend this month?”</i>\n\n"
+        f"You can also <b>ask</b> (<i>“how much did I spend this month?”</i>), "
+        f"make a 🛒 shopping list, or set a 🎯 budget.\n\n"
         f"Tap a button below, send <code>/menu</code>, or <code>/help</code> for the full guide."
     )
 
 
 def help_text() -> str:
     return card("📖 How to use LodgeOS", (
-        "No apps, no forms — just talk to me. Here's everything:\n\n"
+        "Just talk to me like a friend. Type it, 🎙 say it, or 🧾 snap a photo.\n"
+        "Here is everything you can do — with examples you can copy:\n\n"
 
-        "<b>1️⃣ RECORD — tell me what happened</b>\n"
-        "Type it, say it, or snap it:\n"
-        "• <i>Spent £4.50 at Nero for coffee</i>\n"
-        "• 🎙 a voice note of what you spent\n"
-        "• 🧾 a photo of a receipt or payslip\n"
-        "I auto-categorise and confirm each one.\n\n"
+        "<b>1️⃣ TELL ME WHAT YOU SPENT</b> 💬\n"
+        "• <i>Spent £4.50 on coffee</i>\n"
+        "• <i>Paid £45 for Uber</i>\n"
+        "• <i>Got salary £3200</i>\n"
+        "• Many at once: <i>10 on rice and 20 on soap</i>\n"
+        "I sort it into the right group and show you a tick ✅.\n\n"
 
-        "<b>2️⃣ ASK — questions about your money</b>\n"
-        "• <i>How much have I spent this month?</i>\n"
-        "• <i>How much have I spent at Tesco?</i>\n"
+        "<b>2️⃣ ASK ME ANYTHING</b> ❓\n"
+        "• <i>How much did I spend this month?</i>\n"
+        "• <i>How much at Tesco?</i>\n"
         "• <i>What's my biggest expense?</i>\n\n"
 
-        "<b>3️⃣ FIX — correct or undo</b>\n"
+        "<b>3️⃣ FIX A MISTAKE</b> ✏️\n"
         "• <i>Actually that coffee was £6</i>\n"
-        "• <i>Delete the £5 one</i>  (kept for audit, not lost)\n\n"
+        "• <i>Delete the £5 one</i>\n\n"
 
-        "<b>4️⃣ PLAN — price lists for the market</b> 🛒\n"
-        "• <i>start a chai list: ginger 500, milk 1200</i>\n"
-        "• <i>cardamom is actually 700</i> · <i>bought chai</i>\n\n"
+        "<b>4️⃣ MAKE A SHOPPING LIST</b> 🛒\n"
+        "• Start one: <i>start a chai list: 3 ginger at 250, milk 1200</i>\n"
+        "• Add more: <i>add sugar 300</i>  ·  <i>add a flight 450 to the Dubai trip</i>\n"
+        "• Change how many: <i>2 more ginger</i>  ·  <i>make milk 3</i>\n"
+        "• Change a price: <i>ginger is now 300</i>\n"
+        "• Take one off: <i>remove milk</i>\n"
+        "• Put a label on it: <i>phone charger 5000 [shopping]</i>\n"
+        "• See it: <i>show my list</i>  ·  all lists: /lists\n"
+        "• When you've paid: <i>bought chai</i> → I log it for you.\n\n"
 
-        "<b>5️⃣ SPACES — keep things separate</b> 🗂\n"
-        "Split Personal / Business / Property so they don't mix:\n"
+        "<b>5️⃣ SET A BUDGET (a spending limit)</b> 🎯\n"
+        "• <i>Set budget for food 100</i>\n"
+        "• See them: <i>show my budgets</i>  (or /budget)\n"
+        "• Spend from one: <i>spent 20 from the food budget</i>\n"
+        "• Remove one: <i>delete the food budget</i>\n"
+        "• Turn a price list into budgets: <i>turn this list into a budget</i>\n\n"
+
+        "<b>6️⃣ KEEP THINGS SEPARATE</b> 🗂\n"
+        "Personal · Business · Property don't mix:\n"
         "• <i>switch to business space</i>\n"
-        "• or tag one entry: <i>Business: spent £30 on ads</i>\n"
-        "• new space: <code>/space Side Hustle</code>\n\n"
+        "• or label one: <i>Business: spent £30 on ads</i>\n"
+        "• make a new one: <code>/space Side Hustle</code>\n\n"
 
-        "<b>6️⃣ SEE — your numbers</b>\n"
-        "/summary · /month — spending\n"
-        "/budget · /setbudget &lt;cat&gt; &lt;amt&gt;\n"
-        "/income · /history\n"
-        "/insights — vs last month · /subscriptions\n"
-        "/lists — your shopping / price lists\n"
-        "/dashboard — private web view\n\n"
-
-        "💡 <b>Tip:</b> send /menu for tap-buttons — no need to remember commands."
+        "💡 <b>Easiest of all:</b> send /menu and just tap the buttons."
     ))
 
 
