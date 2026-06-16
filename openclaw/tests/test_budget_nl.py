@@ -61,6 +61,18 @@ def test_budget_category_canonicalised(orch):
     assert "Per Diems" in cats
 
 
+def test_expense_attributed_to_named_budget(orch):
+    orch.process("Set budget for Yi Shaun Costs 209£")
+    r = orch.process("I spent 10£ on Monday and 35£ on Tuesday from the Yi Shaun Costs budget")
+    assert r.success
+    recs = orch._storage().query_records(domain="finance", record_type="expense", user_id="default", limit=10)
+    assert len(recs) == 2
+    assert all(rec["entities"]["category"] == "Yi Shaun Costs" for rec in recs)
+    # the budget now shows the spend instead of £0
+    report = orch.router._registry["finance"]._budget_report("default", space="Personal")
+    assert "Yi Shaun Costs" in report and "£45.00" in report
+
+
 def test_normal_expense_not_hijacked(orch):
     r = orch.process("Spent £5 on a budget airline snack")
     assert r.success

@@ -243,6 +243,38 @@ class AgentOrchestrator:
         return self._result(
             True, None, f"🎯 Budget set: {category} — {format_amount(amount, currency)} per month{scope}", start)
 
+    def _explicit_category(self, message: str, user_id: str, space: str):
+        """Detect an explicit category/budget reference and return
+        (category_or_None, message_with_that_clause_removed).
+
+        Recognises "... from/for/under the <name> budget" and bare mentions of an
+        existing budget category, so "spent 10£ ... from the Yi Shaun Costs budget"
+        is logged against that budget."""
+        from openclaw.domains.finance.finance_plugin import _infer_category
+        db = self._storage()
+        names = sorted((b["category"] for b in (db.get_budgets(user_id, "monthly", space=space) if db else [])),
+                       key=len, reverse=True)
+
+        def _match(raw: str) -> Optional[str]:
+            raw = raw.strip()
+            for n in names:                       # an existing budget wins
+                if n.lower() == raw.lower():
+                    return n
+            canonical = _infer_category(raw)
+            if canonical != "Other":
+                return canonical
+            cleaned = " ".join(w for w in re.sub(r"[^a-zA-Z &]", " ", raw).split() if len(w) >= 2)
+            return cleaned.title() or None
+
+        m = re.search(r"\b(?:from|for|under|against|out of)\s+(?:the\s+|my\s+)?(.+?)\s+budget\b",
+                      message, re.IGNORECASE)
+        if m:
+            return _match(m.group(1)), (message[:m.start()] + " " + message[m.end():])
+        for n in names:                            # bare existing-budget name
+            if re.search(r"\b" + re.escape(n) + r"\b", message, re.IGNORECASE):
+                return n, message
+        return None, message
+
     def _is_multi_item(self, message: str) -> bool:
         """True if the message looks like several transactions (a list, or 2+ amounts)."""
         lines = [l for l in message.splitlines() if re.search(r"\d", l)]
@@ -316,20 +348,27 @@ class AgentOrchestrator:
             })
         return items
 
-    def _record_items(self, items: list, user_id: str, space: str, start: float) -> ProcessingResult:
-        """Store each extracted item as its own record; return a grouped receipt."""
+    def _record_items(self, items: list, user_id: str, space: str, start: float,
+                      forced_category: Optional[str] = None) -> ProcessingResult:
+        """Store each extracted item as its own record; return a grouped receipt.
+
+        When forced_category is set (e.g. "from the Yi Shaun Costs budget"), every
+        item is assigned that category instead of one inferred from its name."""
         from collections import defaultdict
         records = []
         for it in items:
             rec = {
                 "domain": "finance", "type": it["type"], "amount": it["amount"],
                 "currency": it["currency"], "description": it["description"],
-                "entities": {}, "raw_input": it["description"], "confidence": 0.8,
+                "entities": {"category": forced_category} if forced_category else {},
+                "raw_input": it["description"], "confidence": 0.8,
                 "user_id": user_id, "space": space, "timestamp": datetime.now().isoformat(),
             }
             plugin, domain = self.router.route(rec)
             rec["domain"] = domain
             rec = plugin.transform(rec)
+            if forced_category:
+                rec["entities"]["category"] = forced_category
             plugin.store(rec)
             self.memory.add(rec)
             records.append(rec)
@@ -390,6 +429,10 @@ class AgentOrchestrator:
             if budget_result is not None:
                 return budget_result
 
+            # Step 0a3: An explicit budget/category reference ("... from the Yi Shaun
+            # Costs budget") applies that category to whatever is recorded next.
+            forced_category, message = self._explicit_category(message, user_id, space)
+
             # Step 0b: Multiple transactions in one message (a list, or a spoken
             # paragraph with several amounts) → record each separately.
             if self._is_multi_item(message):
@@ -404,7 +447,7 @@ class AgentOrchestrator:
                 if len(items) < 2:
                     items = self._extract_line_items(message, default_currency)
                 if len(items) >= 2:
-                    return self._record_items(items, user_id, space, start)
+                    return self._record_items(items, user_id, space, start, forced_category=forced_category)
 
             # Step 0: Is this a correction to an existing entry, or a new one?
             classification = self.corrector.classify(message, self.memory.recent(domain="finance"))
@@ -431,6 +474,8 @@ class AgentOrchestrator:
             # Step 4: Plugin transform + store (tag with the resolved Space)
             record["space"] = space
             record = plugin.transform(record)
+            if forced_category:
+                record.setdefault("entities", {})["category"] = forced_category
             plugin.store(record)
 
             # Step 5: Update session memory
