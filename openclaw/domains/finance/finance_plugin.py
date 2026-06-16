@@ -182,15 +182,20 @@ class FinancePlugin(BasePlugin):
         return "\n".join(lines)
 
     def _budget_remaining_total(self, uid: str, space: Optional[str]) -> Optional[float]:
-        """Sum of (budget − spent) across monthly budgets, or None if no budgets."""
+        """Sum of (budget − spent) for budgets in the user's primary currency, or
+        None if no budgets. Currencies are never mixed (no FX conversion)."""
         budgets = self.db.get_budgets(uid, "monthly", space=space)
+        if not budgets:
+            return None
+        primary = self._user_currency(uid, space)
+        budgets = [b for b in budgets if (b.get("currency") or "GBP") == primary]
         if not budgets:
             return None
         s, e = current_month_range()
         rem = 0.0
         for b in budgets:
             spent = self.db.sum_amount("finance", "expense", uid, s.isoformat(), e.isoformat(),
-                                       category=b["category"], space=b.get("space"))
+                                       category=b["category"], space=b.get("space"), currency=primary)
             rem += b["amount"] - spent
         return rem
 
@@ -626,10 +631,11 @@ class FinancePlugin(BasePlugin):
     # -------------------------------------------------------------------------
 
     def set_budget(self, category: str, amount: float, period: str = "monthly",
-                   user_id: Optional[str] = None, space: str = "Personal") -> str:
+                   user_id: Optional[str] = None, space: str = "Personal",
+                   currency: Optional[str] = None) -> str:
         uid = user_id or self.default_user
-        self.db.upsert_budget(uid, category, amount, period, space=space)
-        cur = self._user_currency(uid, space)
+        cur = currency or self._user_currency(uid, space)
+        self.db.upsert_budget(uid, category, amount, period, currency=cur, space=space)
         scope = f" [{space}]" if space != "Personal" else ""
         return f"Budget set{scope}: {category} — {format_amount(amount, cur)} per {period}"
 
@@ -638,15 +644,15 @@ class FinancePlugin(BasePlugin):
         """Return budget remaining string if a budget is set for this category/space."""
         try:
             uid = self.default_user
-            cur = self._user_currency(uid, space)
             budgets = self.db.get_budgets(uid, "monthly", space=space)
             for b in budgets:
                 if b["category"].lower() == category.lower():
+                    cur = b.get("currency") or self._user_currency(uid, space)
                     s, e = current_month_range()
                     spent = self.db.sum_amount(
                         domain="finance", record_type="expense",
                         user_id=uid, since=s.isoformat(), until=e.isoformat(),
-                        category=category, space=space,
+                        category=category, space=space, currency=cur,
                     )
                     remaining = b["amount"] - spent
                     if remaining < 0:
@@ -664,14 +670,15 @@ class FinancePlugin(BasePlugin):
             return f"No budgets set{scope}. Use /setbudget <category> <amount> to create one."
 
         s, e = current_month_range()
-        cur = self._user_currency(uid, space)
         scope = f" · {space}" if space else ""
         lines = [f"📋 Monthly Budget Report{scope}", ""]
         for b in budgets:
+            cur = b.get("currency") or "GBP"
+            # Compare spending only in the budget's own currency (no FX conversion).
             spent = self.db.sum_amount(
                 domain="finance", record_type="expense",
                 user_id=uid, since=s.isoformat(), until=e.isoformat(),
-                category=b["category"], space=b.get("space"),
+                category=b["category"], space=b.get("space"), currency=cur,
             )
             remaining = b["amount"] - spent
             pct = (spent / b["amount"] * 100) if b["amount"] > 0 else 0

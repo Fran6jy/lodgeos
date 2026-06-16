@@ -190,6 +190,7 @@ class AgentOrchestrator:
     # or decimal money. Used to decide if a message holds multiple transactions.
     _MONEY_RE = re.compile(
         r"[£$€₦¥₹]\s*\d[\d,]*(?:\.\d+)?"
+        r"|\d[\d,]*(?:\.\d+)?\s*[£$€₦¥₹]"
         r"|\d[\d,]*(?:\.\d+)?\s*(?:naira|pounds?|dollars?|euros?|cedis?|shillings?|gbp|usd|ngn|eur|ghs|kes)"
         r"|\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b"
         r"|\b\d+\.\d{2}\b",
@@ -230,7 +231,7 @@ class AgentOrchestrator:
                 False, None,
                 f"🎯 Sure — what monthly limit for {category}? e.g. “set {category} budget to 50”.",
                 start)
-        plugin.set_budget(category, amount, "monthly", user_id=user_id, space=space)
+        plugin.set_budget(category, amount, "monthly", user_id=user_id, space=space, currency=currency)
         scope = f" · {space}" if space and space != "Personal" else ""
         return self._result(
             True, None, f"🎯 Budget set: {category} — {format_amount(amount, currency)} per month{scope}", start)
@@ -241,6 +242,34 @@ class AgentOrchestrator:
         if "\n" in message and len(lines) >= 2:
             return True
         return len(self._MONEY_RE.findall(message)) >= 2
+
+    def _extract_line_items_rule(self, message: str, default_currency: str) -> list:
+        """Deterministically split "10£ on rice and 20£ on food" into transactions.
+
+        Handles the common "<amount> on/for <thing>" pattern repeated with
+        and/comma separators. Returns [] when it doesn't clearly match, so the
+        LLM splitter can take over."""
+        from openclaw.utils.currency_normalizer import SYMBOL_MAP, WORD_MAP
+        cur_word = r"(?:naira|pounds?|dollars?|euros?|gbp|usd|ngn|eur)"
+        # Amount with a leading OR trailing symbol/word: "£10", "10£", "10 naira".
+        pat = re.compile(
+            rf"([£$€₦])?\s*(\d[\d,]*(?:\.\d+)?)\s*([£$€₦])?\s*({cur_word})?\s+(?:on|for)\s+"
+            rf"(.+?)(?=\s+(?:and|,|;|plus)\s+[£$€₦]?\s*\d|\s*[,;]|$)",
+            re.IGNORECASE,
+        )
+        income = bool(re.search(r"\b(received|earned|got paid|income|salary|made)\b", message, re.IGNORECASE))
+        items = []
+        for m in pat.finditer(message):
+            amt = float(m.group(2).replace(",", ""))
+            cur = (SYMBOL_MAP.get(m.group(1) or "") or SYMBOL_MAP.get(m.group(3) or "")
+                   or WORD_MAP.get((m.group(4) or "").lower()) or default_currency)
+            desc = re.sub(r"\bthe\b", " ", m.group(5), flags=re.IGNORECASE).strip(" .")
+            items.append({
+                "amount": amt, "currency": cur,
+                "description": desc[:80] or "entry",
+                "type": "income" if income else "expense",
+            })
+        return items if len(items) >= 2 else []
 
     def _extract_line_items(self, message: str, default_currency: str) -> list:
         """Use the LLM to split one message into individual transactions."""
@@ -357,7 +386,16 @@ class AgentOrchestrator:
             # Step 0b: Multiple transactions in one message (a list, or a spoken
             # paragraph with several amounts) → record each separately.
             if self._is_multi_item(message):
-                items = self._extract_line_items(message, default_currency)
+                items = []
+                # For a single-line "10£ on rice and 20£ on food", split deterministically
+                # (reliable, offline) — but only if it captures every amount. Otherwise
+                # defer to the LLM splitter, which handles messy multi-line paragraphs.
+                if "\n" not in message:
+                    rule = self._extract_line_items_rule(message, default_currency)
+                    if len(rule) == len(self._MONEY_RE.findall(message)):
+                        items = rule
+                if len(items) < 2:
+                    items = self._extract_line_items(message, default_currency)
                 if len(items) >= 2:
                     return self._record_items(items, user_id, space, start)
 

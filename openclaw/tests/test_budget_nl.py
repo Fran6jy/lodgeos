@@ -41,6 +41,16 @@ def test_budget_for_phrasing(orch):
     assert any(b["category"] == "Groceries" and b["amount"] == 200 for b in budgets)
 
 
+def test_budget_keeps_its_currency(orch):
+    # A £ budget must store and report in £, even for a naira-default user.
+    orch.process("Set budget for Food 100£")
+    budgets = orch._storage().get_budgets("default", "monthly", space="Personal")
+    food = next(b for b in budgets if b["category"] == "Food")
+    assert food["amount"] == 100 and food["currency"] == "GBP"
+    report = orch.router._registry["finance"]._budget_report("default", space="Personal")
+    assert "£100.00" in report and "₦100.00" not in report
+
+
 def test_normal_expense_not_hijacked(orch):
     r = orch.process("Spent £5 on a budget airline snack")
     assert r.success

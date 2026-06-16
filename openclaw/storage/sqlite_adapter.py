@@ -259,6 +259,7 @@ class SQLiteAdapter:
         until: Optional[str] = None,
         category: Optional[str] = None,
         space: Optional[str] = None,
+        currency: Optional[str] = None,
     ) -> float:
         clauses = ["domain = ?", "user_id = ?", "COALESCE(voided, 0) = 0"]
         params: List[Any] = [domain, user_id]
@@ -279,6 +280,9 @@ class SQLiteAdapter:
             # category lives inside JSON data
             clauses.append("json_extract(data, '$.entities.category') = ?")
             params.append(category)
+        if currency:
+            clauses.append("COALESCE(currency, 'GBP') = ?")
+            params.append(currency)
 
         where = " AND ".join(clauses)
         with self._conn() as conn:

@@ -68,6 +68,16 @@ class TestBatchEntry:
         assert sorted(rec["amount"] for rec in recs) == [5000.0, 5000.0, 10000.0, 10000.0]
         assert "Recorded 4 entries" in r.response
 
+    def test_single_line_split_by_category(self, orch):
+        # "10£ on rice and 20£ on food" → two expenses in their own categories.
+        r = orch.process("I spent 10£ on rice and 20£ on the food budget")
+        assert r.success
+        recs = orch._storage().query_records(domain="finance", record_type="expense", user_id="default", limit=10)
+        assert len(recs) == 2
+        by_amt = {rec["amount"]: rec for rec in recs}
+        assert by_amt[10.0]["currency"] == "GBP"
+        assert by_amt[20.0]["entities"]["category"] == "Food & Drink"
+
     def test_single_line_not_batched(self, orch):
         r = orch.process("Spent £4.50 on coffee")
         assert r.success
