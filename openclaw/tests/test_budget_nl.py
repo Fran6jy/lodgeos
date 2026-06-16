@@ -45,10 +45,20 @@ def test_budget_keeps_its_currency(orch):
     # A £ budget must store and report in £, even for a naira-default user.
     orch.process("Set budget for Food 100£")
     budgets = orch._storage().get_budgets("default", "monthly", space="Personal")
-    food = next(b for b in budgets if b["category"] == "Food")
+    food = next(b for b in budgets if b["category"] == "Food & Drink")
     assert food["amount"] == 100 and food["currency"] == "GBP"
     report = orch.router._registry["finance"]._budget_report("default", space="Personal")
     assert "£100.00" in report and "₦100.00" not in report
+
+
+def test_budget_category_canonicalised(orch):
+    # A recognised category snaps to the standard name so budgets reconcile with
+    # auto-categorised spending; an unknown name stays as a custom category.
+    orch.process("Set budget for food 80")
+    orch.process("Set budget for per diems 120")
+    cats = {b["category"] for b in orch._storage().get_budgets("default", "monthly", space="Personal")}
+    assert "Food & Drink" in cats and "Food" not in cats
+    assert "Per Diems" in cats
 
 
 def test_normal_expense_not_hijacked(orch):

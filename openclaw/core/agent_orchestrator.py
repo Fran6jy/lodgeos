@@ -222,6 +222,13 @@ class AgentOrchestrator:
         category = " ".join(w for w in cat_src.split() if len(w) >= 2).strip().title()
         if not category:
             return None
+        # Snap to a standard category when recognised ("food" → "Food & Drink",
+        # "fuel" → "Transport") so budgets reconcile with auto-categorised spending.
+        # Unrecognised names ("Tea", "Per Diems") stay as custom categories.
+        from openclaw.domains.finance.finance_plugin import _infer_category
+        canonical = _infer_category(category)
+        if canonical != "Other":
+            category = canonical
 
         plugin = self.router._registry.get("finance")
         if plugin is None:
