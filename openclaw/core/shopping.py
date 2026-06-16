@@ -152,8 +152,11 @@ class ShoppingManager:
             return self._add(message, user_id, space, name)
 
         # Set the trip budget for the open list: "budget 20000", "set the budget to 20000".
-        # Guarded so finance budgets ("set tea budget to 50") still go to the parser.
-        if active and re.search(r"(?:^|\b(?:set|the|my|a|our|trip|list|shopping|market)\s+)budget\b", low):
+        # Guarded so finance category budgets ("set tea budget to 50", "set budget for
+        # food 100") still go to the parser: a trip budget never names a category.
+        if active and re.search(r"(?:^|\b(?:set|the|my|a|our|trip|list|shopping|market)\s+)budget\b", low) \
+                and not re.search(r"\bbudget\s+(?:for|on)\b", low) \
+                and not self._mentions_category(low):
             budget = self._parse_budget(low)
             if budget is not None:
                 self.db.set_active_list_budget(user_id, budget)
@@ -198,6 +201,12 @@ class ShoppingManager:
         return ("reply", self._render(user_id, space, name, header=f"➕ Added {added}"))
 
     @staticmethod
+    def _mentions_category(low: str) -> bool:
+        """True if the text names a spend category — used to tell a finance category
+        budget ("set budget for food 100") from a list trip budget ("budget 20000")."""
+        return any(re.search(r"\b" + re.escape(tok) + r"\b", low) for tok in _CATEGORY_TAGS)
+
+    @staticmethod
     def _parse_budget(low: str) -> Optional[float]:
         m = re.search(r"\bbudget\b[^0-9£$€₦]{0,10}([£$€₦]?\d[\d,]*(?:\.\d+)?)", low)
         if not m:
@@ -207,6 +216,9 @@ class ShoppingManager:
         return float(re.sub(r"[£$€₦,]", "", m.group(1)))
 
     def _try_qty_edit(self, low: str, user_id: str, space: str, name: str) -> Optional[Signal]:
+        # A budget command ("set budget for food 100") is never a quantity edit.
+        if "budget" in low:
+            return None
         # increment: "add 2 more ginger" / "2 more ginger"
         m = re.search(r"\b(?:add\s+)?(\d+)\s+more\s+([a-z][a-z ]*)", low)
         if m:

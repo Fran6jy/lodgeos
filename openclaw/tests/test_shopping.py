@@ -149,6 +149,15 @@ class TestShoppingFlow:
         # the trip budget was NOT set from this
         assert orch._storage().get_active_list_budget("default") is None
 
+    def test_budget_for_category_not_hijacked_by_list(self, orch):
+        # "set budget for food 100" names a category → finance, not the trip budget.
+        orch.process("start a ogbono list: palm oil 500")
+        orch.process("set budget for food 100")
+        # trip budget untouched; a real (category) budget was created instead
+        assert orch._storage().get_active_list_budget("default") is None
+        cats = {b["category"] for b in orch._storage().get_budgets("default", "monthly")}
+        assert any("food" in c.lower() for c in cats)
+
     def test_remove_single_item(self, orch):
         orch.process("start a chai list: ginger 500, milk 1200, cardamom 800")
         r = orch.process("remove milk from the chai list")
