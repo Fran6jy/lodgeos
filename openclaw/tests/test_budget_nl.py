@@ -73,6 +73,21 @@ def test_expense_attributed_to_named_budget(orch):
     assert "Yi Shaun Costs" in report and "£45.00" in report
 
 
+def test_spend_in_named_budget_not_set_as_budget(orch):
+    # "Spent in karate budget 10£ plus 20£" must log 2 expenses against the
+    # Karate Costs budget, NOT create a new budget.
+    orch.process("Set budget for Karate Costs 209£")
+    r = orch.process("Spent in karate budget 10£ plus 20£")
+    assert r.success
+    recs = orch._storage().query_records(domain="finance", record_type="expense", user_id="default", limit=10)
+    assert len(recs) == 2
+    assert all(rec["entities"]["category"] == "Karate Costs" for rec in recs)
+    # no stray budget got created from this message
+    cats = [b["category"] for b in orch._storage().get_budgets("default", "monthly")]
+    assert cats.count("Karate Costs") == 1
+    assert not any("karate plus" in c.lower() for c in cats)
+
+
 def test_normal_expense_not_hijacked(orch):
     r = orch.process("Spent £5 on a budget airline snack")
     assert r.success

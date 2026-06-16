@@ -204,6 +204,11 @@ class AgentOrchestrator:
         low = message.lower()
         if "budget" not in low:
             return None
+        # A spending verb means "log an expense (against a budget)", not "set a
+        # budget" — unless it explicitly says set/create a budget.
+        if re.search(r"\b(spent|spend|paid|bought|buy|withdrew|sent|cost me|spending)\b", low) \
+                and not re.search(r"\b(set|setup|create|make)\b[^.?]*\bbudget\b", low):
+            return None
         # Must look like *setting* a budget, not a query (questions are filtered upstream).
         if not (re.search(r"\bset\b", low) or re.search(r"budget\b[^.?]*\bfor\b", low)
                 or re.search(r"\bbudget\b[^.?]*[£$€₦]?\d", low)):
@@ -257,8 +262,14 @@ class AgentOrchestrator:
 
         def _match(raw: str) -> Optional[str]:
             raw = raw.strip()
-            for n in names:                       # an existing budget wins
-                if n.lower() == raw.lower():
+            rl = raw.lower()
+            for n in names:                       # an existing budget, exact
+                if n.lower() == rl:
+                    return n
+            rwords = set(re.findall(r"[a-z]+", rl))
+            for n in names:                       # ... or a word-subset ("karate" → "Karate Costs")
+                nwords = set(re.findall(r"[a-z]+", n.lower()))
+                if rwords and (rwords <= nwords or nwords <= rwords):
                     return n
             canonical = _infer_category(raw)
             if canonical != "Other":
@@ -266,7 +277,7 @@ class AgentOrchestrator:
             cleaned = " ".join(w for w in re.sub(r"[^a-zA-Z &]", " ", raw).split() if len(w) >= 2)
             return cleaned.title() or None
 
-        m = re.search(r"\b(?:from|for|under|against|out of)\s+(?:the\s+|my\s+)?(.+?)\s+budget\b",
+        m = re.search(r"\b(?:from|for|under|against|out of|in|to|towards?)\s+(?:the\s+|my\s+)?(.+?)\s+budget\b",
                       message, re.IGNORECASE)
         if m:
             return _match(m.group(1)), (message[:m.start()] + " " + message[m.end():])
@@ -308,7 +319,29 @@ class AgentOrchestrator:
                 "description": desc[:80] or "entry",
                 "type": "income" if income else "expense",
             })
-        return items if len(items) >= 2 else []
+        if len(items) >= 2:
+            return items
+
+        # Fallback: bare amounts joined by plus/and/comma ("10£ plus 20£"), where
+        # the rest is only connector/verb words — split one record per amount.
+        leftover = re.sub(r"[£$€₦]?\s*\d[\d,]*(?:\.\d+)?\s*[£$€₦]?\s*" + cur_word + r"?",
+                          " ", message, flags=re.IGNORECASE)
+        leftover_words = {w for w in re.findall(r"[a-z]+", leftover.lower())}
+        connectors = {"spent", "spend", "paid", "plus", "and", "also", "then", "another",
+                      "i", "a", "of", "the", "my", "in", "to", "on", "for", "budget"}
+        if leftover_words <= connectors:
+            amt_pat = re.compile(rf"([£$€₦])?\s*(\d[\d,]*(?:\.\d+)?)\s*([£$€₦])?\s*({cur_word})?", re.IGNORECASE)
+            bare = []
+            for m in amt_pat.finditer(message):
+                if not m.group(2):
+                    continue
+                cur = (SYMBOL_MAP.get(m.group(1) or "") or SYMBOL_MAP.get(m.group(3) or "")
+                       or WORD_MAP.get((m.group(4) or "").lower()) or default_currency)
+                bare.append({"amount": float(m.group(2).replace(",", "")), "currency": cur,
+                             "description": "entry", "type": "income" if income else "expense"})
+            if len(bare) >= 2:
+                return bare
+        return []
 
     def _extract_line_items(self, message: str, default_currency: str) -> list:
         """Use the LLM to split one message into individual transactions."""
@@ -357,11 +390,14 @@ class AgentOrchestrator:
         from collections import defaultdict
         records = []
         for it in items:
+            desc = it["description"]
+            if desc in ("", "entry") and forced_category:
+                desc = forced_category
             rec = {
                 "domain": "finance", "type": it["type"], "amount": it["amount"],
-                "currency": it["currency"], "description": it["description"],
+                "currency": it["currency"], "description": desc,
                 "entities": {"category": forced_category} if forced_category else {},
-                "raw_input": it["description"], "confidence": 0.8,
+                "raw_input": desc, "confidence": 0.8,
                 "user_id": user_id, "space": space, "timestamp": datetime.now().isoformat(),
             }
             plugin, domain = self.router.route(rec)
