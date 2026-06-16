@@ -86,8 +86,12 @@ class ShoppingManager:
                                    "category": i.get("category")} for i in items])
 
         # Convert a price-check list into category budgets (no amount given):
-        # "convert the chai list to a budget", "make this my budget".
-        if re.search(r"\bbudget\b", low) and re.search(r"\b(convert|turn|make|use|save|set|into)\b", low) \
+        # "convert the chai list to a budget", "make this my budget". Deliberately
+        # narrow: a finance command like "set budget for fuel 209" must NOT match,
+        # so only conversion verbs count and any category/"budget for" defers.
+        if re.search(r"\bbudget\b", low) and re.search(r"\b(convert|turn|use|save|make)\b", low) \
+                and not re.search(r"\bbudget\s+(?:for|on)\b", low) \
+                and not self._mentions_category(low) \
                 and self._parse_budget(low) is None:
             name = active or self._name_in(message, user_id, space)
             if name:

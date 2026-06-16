@@ -158,6 +158,16 @@ class TestShoppingFlow:
         cats = {b["category"] for b in orch._storage().get_budgets("default", "monthly")}
         assert any("food" in c.lower() for c in cats)
 
+    def test_set_budget_not_caught_by_list_converter(self, orch):
+        # "set budget for fuel 209" with a list open must create a finance budget,
+        # not be read as "convert this list into a budget".
+        orch.process("start a ogbono list: palm oil 500")
+        orch.process("set budget for fuel costs 209")
+        cats = {b["category"] for b in orch._storage().get_budgets("default", "monthly")}
+        assert any("fuel" in c.lower() or "transport" in c.lower() for c in cats)
+        # the ogbono list's per-category budget was NOT created from a conversion
+        assert "Groceries" not in cats
+
     def test_remove_single_item(self, orch):
         orch.process("start a chai list: ginger 500, milk 1200, cardamom 800")
         r = orch.process("remove milk from the chai list")
