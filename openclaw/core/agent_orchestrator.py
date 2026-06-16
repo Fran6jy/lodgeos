@@ -197,6 +197,58 @@ class AgentOrchestrator:
         re.IGNORECASE,
     )
 
+    def _route_budget(self, message: str, user_id: str, space: str, start: float):
+        """Single owner of every budget-related message. Classifies into one intent
+        in priority order and dispatches to the relevant executor.
+
+        Returns:
+          {"result": ProcessingResult}      — handled, this is the reply
+          {"forced_category", "message"}    — log an expense against a budget; the
+                                              caller continues recording with this category
+          None                              — not a budget message, continue normally
+        """
+        low = message.lower()
+        has_budget = "budget" in low
+        sm = self.shopping
+        db = self._storage()
+        active = db.get_active_list(user_id) if db else None
+        amount = sm.parse_budget(low)
+        mentions_cat = sm.mentions_category(low)
+        budget_for = bool(re.search(r"\bbudget\s+(?:for|on)\b", low))
+        spend_verb = bool(re.search(r"\b(spent|spend|paid|bought|buy|withdrew|sent|spending|cost me)\b", low))
+        explicit_set = bool(re.search(r"\b(set|setup|create|make)\b[^.?]*\bbudget\b", low))
+        conversion = bool(re.search(r"\b(convert|turn|use|save|make)\b", low))
+
+        # 1) Convert a price-check list into category budgets (no amount, no category).
+        if has_budget and conversion and amount is None and not budget_for and not mentions_cat:
+            name = active or sm.name_in(message, user_id, space)
+            if name and db:
+                items = sm.items_for_signal(user_id, space, name)
+                if not items:
+                    return {"result": self._result(False, None, f"Your “{name}” list is empty.", start)}
+                return {"result": self._handle_shopping_signal(("budget", name, items), user_id, space, start)}
+
+        # 2) Set a finance budget — names a category or "budget for", with an amount.
+        #    A spending verb means "log against", not "set", unless it says set/create.
+        if has_budget and (mentions_cat or budget_for or explicit_set) and not (spend_verb and not explicit_set):
+            res = self._try_budget_intent(message, user_id, space, start)
+            if res is not None:
+                return {"result": res}
+
+        # 3) Trip budget for the open list ("budget 20000", "set the budget to 20000").
+        if has_budget and active and amount is not None and not mentions_cat and not budget_for \
+                and not spend_verb \
+                and re.search(r"(?:^|\b(?:set|the|my|a|our|trip|list|shopping|market)\s+)budget\b", low):
+            reply = sm.set_trip_budget(user_id, space, amount)
+            if reply is not None:
+                return {"result": self._result(True, None, reply, start, domain="finance")}
+
+        # 4) Log an expense against a named budget — annotate and continue recording.
+        cat, cleaned = self._explicit_category(message, user_id, space)
+        if cat:
+            return {"forced_category": cat, "message": cleaned}
+        return None
+
     def _try_budget_intent(self, message: str, user_id: str, space: str, start: float):
         """Set a budget from plain language ("set budget for tea 50"). Returns a
         ProcessingResult if it's a budget command, else None (so it isn't recorded
@@ -453,21 +505,23 @@ class AgentOrchestrator:
                     pending={"action": "VOID_ALL", "space": space, "count": count, "candidates": []},
                 )
 
-            # Step 0a1: Shopping / price lists ("start a chai list", "bought chai",
+            # Step 0a1: Budget router — the single owner of every "budget" message
+            # (set / convert-list / trip / log-against). Returns a terminal result,
+            # or annotates (forced_category + cleaned message) and lets us continue.
+            forced_category = None
+            budget = self._route_budget(message, user_id, space, start)
+            if budget is not None:
+                if "result" in budget:
+                    return budget["result"]
+                forced_category = budget.get("forced_category")
+                message = budget.get("message", message)
+
+            # Step 0a2: Shopping / price lists ("start a chai list", "bought chai",
             # or bare items while a list is open). Checked before recording so list
             # items aren't logged as expenses.
             shop_signal = self.shopping.handle(message, user_id, space)
             if shop_signal is not None:
                 return self._handle_shopping_signal(shop_signal, user_id, space, start)
-
-            # Step 0a2: Natural-language budget setting ("set budget for tea 50").
-            budget_result = self._try_budget_intent(message, user_id, space, start)
-            if budget_result is not None:
-                return budget_result
-
-            # Step 0a3: An explicit budget/category reference ("... from the Yi Shaun
-            # Costs budget") applies that category to whatever is recorded next.
-            forced_category, message = self._explicit_category(message, user_id, space)
 
             # Step 0b: Multiple transactions in one message (a list, or a spoken
             # paragraph with several amounts) → record each separately.

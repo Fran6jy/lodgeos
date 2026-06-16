@@ -88,6 +88,27 @@ def test_spend_in_named_budget_not_set_as_budget(orch):
     assert not any("karate plus" in c.lower() for c in cats)
 
 
+def test_budget_router_precedence(orch):
+    # All four budget intents resolved by the single router, no cross-talk.
+    # set
+    orch.process("set budget for tea 300")
+    # convert a list (distinct categories)
+    orch.process("start a market list: rice 100, bus fare 50 [transport]")
+    orch.process("convert the market list to a budget")
+    # trip budget on an open list
+    orch.process("start a party list: cake 40")
+    r_trip = orch.process("budget 200")
+    assert "Budget" in r_trip.response and "200" in r_trip.response
+    # log against a named budget
+    orch.process("spent 25 from the tea budget")
+    budgets = {b["category"]: b["amount"] for b in orch._storage().get_budgets("default", "monthly")}
+    assert budgets["Tea"] == 300                # set, not overwritten by the spend
+    assert budgets["Transport"] == 50           # from the conversion
+    assert budgets["Groceries"] == 100          # rice, from the conversion
+    recs = orch._storage().query_records(domain="finance", record_type="expense", user_id="default")
+    assert any(r["entities"]["category"] == "Tea" and r["amount"] == 25 for r in recs)
+
+
 def test_normal_expense_not_hijacked(orch):
     r = orch.process("Spent £5 on a budget airline snack")
     assert r.success

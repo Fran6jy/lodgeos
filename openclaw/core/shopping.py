@@ -80,28 +80,10 @@ class ShoppingManager:
             if not items:
                 return ("reply", f"Your “{name}” list is empty.")
             self.db.set_active_list(user_id, None)
-            return ("buy", name, [{"item": i["item"],
-                                   "amount": (i["amount"] or 0) * (i.get("quantity") or 1),
-                                   "currency": i.get("currency", "GBP"),
-                                   "category": i.get("category")} for i in items])
+            return ("buy", name, self.items_for_signal(user_id, space, name))
 
-        # Convert a price-check list into category budgets (no amount given):
-        # "convert the chai list to a budget", "make this my budget". Deliberately
-        # narrow: a finance command like "set budget for fuel 209" must NOT match,
-        # so only conversion verbs count and any category/"budget for" defers.
-        if re.search(r"\bbudget\b", low) and re.search(r"\b(convert|turn|use|save|make)\b", low) \
-                and not re.search(r"\bbudget\s+(?:for|on)\b", low) \
-                and not self._mentions_category(low) \
-                and self._parse_budget(low) is None:
-            name = active or self._name_in(message, user_id, space)
-            if name:
-                items = self.db.get_shopping_items(user_id, space, name)
-                if not items:
-                    return ("reply", f"Your “{name}” list is empty.")
-                return ("budget", name, [{"item": i["item"],
-                                          "amount": (i["amount"] or 0) * (i.get("quantity") or 1),
-                                          "currency": i.get("currency", "GBP"),
-                                          "category": i.get("category")} for i in items])
+        # NB: "budget" intents (set / convert-list / trip / log-against) are owned by
+        # the orchestrator's single budget router, which runs before this handler.
 
         # Remove a single item: "remove milk from the chai list".
         if re.search(r"\b(remove|drop|delete|take\s+off|take\s+out)\b", low):
@@ -155,18 +137,7 @@ class ShoppingManager:
             self.db.set_active_list(user_id, name)
             return self._add(message, user_id, space, name)
 
-        # Set the trip budget for the open list: "budget 20000", "set the budget to 20000".
-        # Guarded so finance category budgets ("set tea budget to 50", "set budget for
-        # food 100") still go to the parser: a trip budget never names a category.
-        if active and re.search(r"(?:^|\b(?:set|the|my|a|our|trip|list|shopping|market)\s+)budget\b", low) \
-                and not re.search(r"\bbudget\s+(?:for|on)\b", low) \
-                and not self._mentions_category(low):
-            budget = self._parse_budget(low)
-            if budget is not None:
-                self.db.set_active_list_budget(user_id, budget)
-                cur = self.currency_fn(user_id, space)
-                return ("reply", self._render(user_id, space, active,
-                                              header=f"🎯 Budget for “{active}” set to {format_amount(budget, cur)}"))
+        # (Trip budget for the open list is handled by the orchestrator's budget router.)
 
         # Adjust an item's quantity: "make ginger 2", "add 2 more ginger", "1 less milk".
         if active:
@@ -190,6 +161,35 @@ class ShoppingManager:
             return self._add(message, user_id, space, active)
 
         return None
+
+    # -- public helpers used by the orchestrator's budget router ------------
+
+    def items_for_signal(self, user_id: str, space: str, name: str) -> List[Dict[str, Any]]:
+        """List items as buy/convert signal entries (amount = unit × quantity)."""
+        items = self.db.get_shopping_items(user_id, space, name)
+        return [{"item": i["item"], "amount": (i["amount"] or 0) * (i.get("quantity") or 1),
+                 "currency": i.get("currency", "GBP"), "category": i.get("category")}
+                for i in items]
+
+    def set_trip_budget(self, user_id: str, space: str, amount: float) -> Optional[str]:
+        """Set the open list's trip budget; return a rendered reply, or None if no
+        list is open."""
+        active = self.db.get_active_list(user_id)
+        if not active:
+            return None
+        self.db.set_active_list_budget(user_id, amount)
+        cur = self.currency_fn(user_id, space)
+        return self._render(user_id, space, active,
+                            header=f"🎯 Budget for “{active}” set to {format_amount(amount, cur)}")
+
+    def parse_budget(self, low: str) -> Optional[float]:
+        return self._parse_budget(low)
+
+    def mentions_category(self, low: str) -> bool:
+        return self._mentions_category(low)
+
+    def name_in(self, message: str, user_id: str, space: str) -> Optional[str]:
+        return self._name_in(message, user_id, space)
 
     # -- helpers ------------------------------------------------------------
 
