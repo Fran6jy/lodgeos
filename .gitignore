@@ -43,3 +43,6 @@ Thumbs.db
 .claude/
 landing/node_modules/
 landing/dist/
+
+# Netlify CLI local state
+.netlify/
