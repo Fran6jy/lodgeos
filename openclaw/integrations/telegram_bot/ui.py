@@ -199,11 +199,13 @@ def help_text() -> str:
         "Just talk to me like a friend. Type it, 🎙 say it, or 🧾 snap a photo.\n"
         "Here is everything you can do — with examples you can copy:\n\n"
 
-        "<b>1️⃣ TELL ME WHAT YOU SPENT</b> 💬\n"
+        "<b>1️⃣ TELL ME WHAT YOU SPENT (or got)</b> 💬\n"
         "• <i>Spent £4.50 on coffee</i>\n"
         "• <i>Paid £45 for Uber</i>\n"
         "• <i>Got salary £3200</i>\n"
+        "• Got money back? <i>Refund £10 for shoes</i>\n"
         "• Many at once: <i>10 on rice and 20 on soap</i>\n"
+        "Works in any money — £, $, ₦, € … I keep each on its own.\n"
         "I sort it into the right group and show you a tick ✅.\n\n"
 
         "<b>2️⃣ ASK ME ANYTHING</b> ❓\n"
@@ -238,7 +240,16 @@ def help_text() -> str:
         "• or label one: <i>Business: spent £30 on ads</i>\n"
         "• make a new one: <code>/space Side Hustle</code>\n\n"
 
-        "💡 <b>Easiest of all:</b> send /menu and just tap the buttons."
+        "<b>7️⃣ SEE YOUR NUMBERS &amp; GET NUDGES</b> 📊\n"
+        "/summary — this week  ·  /month — this month\n"
+        "/income — money in  ·  /history — past entries\n"
+        "/insights — how this month compares to last\n"
+        "/subscriptions — bills that repeat\n"
+        "/dashboard — your own private web page\n"
+        "🔔 /reminders — a little daily recap + morning hello\n\n"
+
+        "💡 <b>Easiest of all:</b> send /menu and just tap the buttons — "
+        "every feature here is one tap away."
     ))
 
 
