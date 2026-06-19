@@ -140,6 +140,10 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(ui.help_text(), parse_mode="HTML", reply_markup=ui.back_kb())
 
 
+async def examples_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(ui.examples_card(), parse_mode="HTML", reply_markup=ui.back_kb())
+
+
 def _history_page(fp, user_id: str, offset: int = 0, n: int = 10):
     """Return (card_text, keyboard) for one page of history."""
     rows = fp.db.query_records(domain="finance", user_id=user_id, limit=offset + n + 1)
@@ -241,6 +245,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         text = await _dashboard_text(fp, uid)
     elif action == "add":
         text = ui.add_help()
+    elif action == "examples":
+        text = ui.examples_card()
     elif action == "help":
         text = ui.help_text()
     else:
@@ -552,7 +558,9 @@ async def _finalise(pm, result, user_id: str, prefix: str = "") -> None:
     if result.success:
         await pm.finish(prefix + result.response, reply_markup=_quick_keyboard())
     else:
-        await pm.fail(f"⚠️ {result.response}")
+        # Soft replies (nudges, "which budget?", confirmations) already carry their
+        # own emoji/tone — don't slap a scary ⚠️ on them. Bare/empty → default fail.
+        await pm.fail(result.response or None)
 
 
 async def _process_user_text(update, context, text: str, kind: str = "text",
@@ -750,6 +758,7 @@ def main():
     app.add_handler(CommandHandler("start", start_handler))
     app.add_handler(CommandHandler("menu", menu_handler))
     app.add_handler(CommandHandler("help", help_handler))
+    app.add_handler(CommandHandler("examples", examples_handler))
     app.add_handler(CommandHandler("summary", summary_handler))
     app.add_handler(CommandHandler("month", month_handler))
     app.add_handler(CommandHandler("budget", budget_handler))

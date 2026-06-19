@@ -173,6 +173,13 @@ def test_budget_report_over_budget(orch):
     assert "OVER" in report and "⚠️" in report
 
 
+def test_vague_message_nudges_not_recorded(orch):
+    # An unparseable message gets a how-to nudge, not a stored junk note.
+    r = orch.process("asdf qwerty zzz")
+    assert not r.success and "didn't quite catch" in r.response
+    assert orch._storage().query_records(user_id="default") == []
+
+
 def test_normal_expense_not_hijacked(orch):
     r = orch.process("Spent £5 on a budget airline snack")
     assert r.success

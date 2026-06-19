@@ -44,7 +44,8 @@ def main_menu_kb() -> InlineKeyboardMarkup:
          InlineKeyboardButton("📈 Dashboard", callback_data="menu|dashboard")],
         [InlineKeyboardButton("🔔 Reminders", callback_data="menu|reminders"),
          InlineKeyboardButton("💖 Support", callback_data="menu|donate")],
-        [InlineKeyboardButton("❓ Help", callback_data="menu|help")],
+        [InlineKeyboardButton("✨ Examples", callback_data="menu|examples"),
+         InlineKeyboardButton("❓ Help", callback_data="menu|help")],
     ])
 
 
@@ -268,6 +269,20 @@ def help_text() -> str:
     ))
 
 
+def examples_card() -> str:
+    """A tiny starter card — copy any line and send it."""
+    return card("✨ Try these — just copy &amp; send", (
+        "Tap to copy a line, then send it to me:\n\n"
+        "💬  <code>Spent £4 on coffee</code>\n"
+        "💬  <code>Got salary £3200</code>\n"
+        "❓  <code>How much did I spend this month?</code>\n"
+        "🛒  <code>start a chai list: 3 ginger at 250, milk 1200</code>\n"
+        "🎯  <code>Set budget for food 100</code>\n"
+        "🗂  <code>switch to business space</code>\n\n"
+        "More in /help, or tap /menu for buttons."
+    ))
+
+
 def add_help() -> str:
     return card("➕ Add an entry", (
         "Send me any of these and I’ll log it:\n\n"
@@ -297,6 +312,7 @@ def bot_commands() -> list:
         BotCommand("history", "🧾 Recent transactions"),
         BotCommand("dashboard", "📈 Private web dashboard"),
         BotCommand("spaces", "🗂 Switch Budget Space"),
+        BotCommand("examples", "✨ Copy-and-send starter examples"),
         BotCommand("help", "❓ How to use the bot"),
         BotCommand("donate", "💖 Buy the dev a coffee"),
     ]

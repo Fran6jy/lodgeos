@@ -736,6 +736,19 @@ class AgentOrchestrator:
             record["user_id"] = user_id
             record["processed_at"] = datetime.now().isoformat()
 
+            # If we couldn't find anything to record (a vague note with no amount),
+            # nudge with how-to instead of silently storing a junk "general note".
+            if record.get("type") == "general_note" and record.get("amount") is None and not forced_category:
+                return self._result(
+                    False, None,
+                    "🤔 I didn't quite catch that. Try:\n"
+                    "• Spent £4 on coffee\n"
+                    "• How much did I spend this month?\n"
+                    "• start a chai list: 3 ginger at 250\n"
+                    "• Set budget for food 100\n"
+                    "Or tap /menu for buttons.",
+                    start)
+
             # Step 2: Validate schema
             try:
                 self.validator.validate_or_raise(record)
