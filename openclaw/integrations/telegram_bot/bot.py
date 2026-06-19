@@ -107,7 +107,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
         return
     await update.message.reply_text(
-        ui.welcome(name), parse_mode="HTML", reply_markup=ui.main_menu_kb()
+        ui.welcome(name, fp.db.get_active_space(uid)), parse_mode="HTML", reply_markup=ui.main_menu_kb()
     )
 
 
@@ -118,17 +118,21 @@ async def tutorial_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     arg = q.data.split("|", 1)[1]
     _, fp = _get_orchestrator()
     if arg == "done":
-        fp.db.set_tutorial_done(str(q.from_user.id))
+        uid = str(q.from_user.id)
+        fp.db.set_tutorial_done(uid)
         name = q.from_user.first_name or ""
-        await q.edit_message_text(ui.welcome(name), parse_mode="HTML", reply_markup=ui.main_menu_kb())
+        await q.edit_message_text(ui.welcome(name, fp.db.get_active_space(uid)),
+                                  parse_mode="HTML", reply_markup=ui.main_menu_kb())
         return
     text, kb = ui.tutorial(int(arg))
     await q.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
 
 
 async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _, fp = _get_orchestrator()
+    uid = str(update.effective_user.id)
     await update.message.reply_text(
-        ui.welcome(), parse_mode="HTML", reply_markup=ui.main_menu_kb()
+        ui.welcome("", fp.db.get_active_space(uid)), parse_mode="HTML", reply_markup=ui.main_menu_kb()
     )
 
 
@@ -192,7 +196,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     uid = str(q.from_user.id)
 
     if action == "home":
-        await q.edit_message_text(ui.welcome(), parse_mode="HTML", reply_markup=ui.main_menu_kb())
+        await q.edit_message_text(ui.welcome("", fp.db.get_active_space(uid)),
+                                  parse_mode="HTML", reply_markup=ui.main_menu_kb())
         return
     if action == "donate":
         text, kb = ui.donate_card_and_kb()
@@ -527,6 +532,12 @@ async def _finalise(pm, result, user_id: str, prefix: str = "") -> None:
                 [InlineKeyboardButton(f"✅ Yes, void all {payload.get('count', '')}", callback_data=f"corr|{token}|confirm")],
                 [InlineKeyboardButton("✖️ Cancel", callback_data=f"corr|{token}|cancel")],
             ])
+        elif payload.get("action") == "AMOUNT_CONFIRM":
+            rows = [[InlineKeyboardButton(format_amount(c["amount"], c["currency"]),
+                                          callback_data=f"corr|{token}|{i}")]
+                    for i, c in enumerate(payload["candidates"])]
+            rows.append([InlineKeyboardButton("✖️ Neither / cancel", callback_data=f"corr|{token}|cancel")])
+            kb = InlineKeyboardMarkup(rows)
         else:
             rows = []
             for i, c in enumerate(payload["candidates"]):
@@ -611,6 +622,11 @@ async def correction_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     if choice == "confirm" and payload.get("action") == "VOID_ALL":
         orch, _ = _get_orchestrator()
         result = orch.apply_void_all(payload["user_id"], space=payload.get("space"))
+        await query.edit_message_text(result.response)
+        return
+    if payload.get("action") == "AMOUNT_CONFIRM":
+        orch, _ = _get_orchestrator()
+        result = orch.record_amount_choice(payload, int(choice), payload["user_id"])
         await query.edit_message_text(result.response)
         return
 

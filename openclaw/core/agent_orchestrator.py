@@ -385,6 +385,102 @@ class AgentOrchestrator:
                 return n, message
         return None, message
 
+    _NUM_ONES = {
+        "zero": 0, "oh": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+        "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11,
+        "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16,
+        "seventeen": 17, "eighteen": 18, "nineteen": 19,
+    }
+    _NUM_TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
+                 "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90}
+
+    @classmethod
+    def _normalize_number_words(cls, text: str) -> str:
+        """Turn simple spoken numbers into digits: "eight ten" → "8 10",
+        "three fifty" → "3 50", "twenty five" → "25". Leaves hundred/thousand
+        alone so "eight hundred ten" is NOT read as a pence amount."""
+        words = text.split()
+        out, i = [], 0
+        while i < len(words):
+            w = words[i].lower().strip(".,!?")
+            nxt = words[i + 1].lower().strip(".,!?") if i + 1 < len(words) else ""
+            if w in cls._NUM_TENS and nxt in cls._NUM_ONES and 1 <= cls._NUM_ONES[nxt] <= 9:
+                out.append(str(cls._NUM_TENS[w] + cls._NUM_ONES[nxt])); i += 2; continue
+            if w in cls._NUM_TENS:
+                out.append(str(cls._NUM_TENS[w])); i += 1; continue
+            if w in cls._NUM_ONES:
+                out.append(str(cls._NUM_ONES[w])); i += 1; continue
+            out.append(words[i]); i += 1
+        return " ".join(out)
+
+    def _ambiguous_amount(self, message: str, default_currency: str, space: str,
+                          forced_category):
+        """Detect a spoken "<whole> <pence>" amount ("eight ten" → 8.10 / 810) and
+        return a pending AMOUNT_CONFIRM payload, or None. Conservative: needs a
+        money context and a 2-digit second part, so it rarely false-fires."""
+        from openclaw.utils.currency_normalizer import SYMBOL_MAP, WORD_MAP
+        norm = self._normalize_number_words(message)
+        # An integer pair "<A> <B>" with B two digits (10-99) and no decimals around.
+        m = re.search(r"(?<![.\d])([£$€₦])?\s*(\d{1,4})\s+(\d{2})(?![.\d])", norm)
+        if not m:
+            return None
+        # Require a money context so unrelated number pairs don't trigger.
+        sym = m.group(1)
+        cur_word = re.search(r"\b(naira|pounds?|dollars?|euros?|gbp|usd|ngn|eur)\b", message, re.IGNORECASE)
+        spend = re.search(r"\b(spent|spend|paid|pay|bought|buy|cost|costs?|got|received|earned|made|salary)\b",
+                          message, re.IGNORECASE)
+        if not (sym or cur_word or spend):
+            return None
+        a, b = int(m.group(2)), int(m.group(3))
+        decimal = float(f"{a}.{b:02d}")
+        whole = float(f"{a}{b:02d}")
+        if decimal == whole:
+            return None
+        currency = (SYMBOL_MAP.get(sym or "") or WORD_MAP.get((cur_word.group(1).lower() if cur_word else ""))
+                    or default_currency)
+        rtype = "income" if re.search(r"\b(got|received|earned|made|salary|income)\b", message, re.IGNORECASE) else "expense"
+        # Description = what's left after stripping numbers, currency and verbs.
+        d = re.sub(r"[£$€₦]", " ", norm)
+        d = re.sub(r"\b\d+\b", " ", d)
+        d = re.sub(r"\b(spent|spend|paid|pay|bought|buy|cost|costs?|got|received|earned|made|salary|income|"
+                   r"on|for|the|a|an|i|me|my|of|to|at|naira|pounds?|dollars?|euros?|gbp|usd|ngn|eur)\b",
+                   " ", d, flags=re.IGNORECASE)
+        description = " ".join(d.split()).strip() or "entry"
+        return {
+            "action": "AMOUNT_CONFIRM", "candidates": [
+                {"amount": decimal, "currency": currency},
+                {"amount": whole, "currency": currency},
+            ],
+            "description": description, "type": rtype, "space": space,
+            "category": forced_category, "user_id": None,  # filled in by the bot layer
+        }
+
+    def record_amount_choice(self, payload: dict, index: int, user_id: str):
+        """Store the expense/income the user picked from an AMOUNT_CONFIRM prompt."""
+        start = time.perf_counter()
+        c = payload["candidates"][index]
+        rec = {
+            "domain": "finance", "type": payload.get("type", "expense"),
+            "amount": c["amount"], "currency": c["currency"],
+            "description": payload.get("description", "entry"),
+            "entities": {"category": payload["category"]} if payload.get("category") else {},
+            "raw_input": payload.get("description", ""), "confidence": 0.95,
+            "user_id": user_id, "space": payload.get("space", "Personal"),
+            "timestamp": datetime.now().isoformat(),
+        }
+        plugin, domain = self.router.route(rec)
+        rec["domain"] = domain
+        rec = plugin.transform(rec)
+        if payload.get("category"):
+            rec["entities"]["category"] = payload["category"]
+        plugin.store(rec)
+        self.memory.add(rec)
+        try:
+            response = plugin.build_response(rec, self.memory, dev=self.dev)
+        except TypeError:
+            response = plugin.build_response(rec, self.memory)
+        return self._result(True, rec, response, start, domain="finance")
+
     def _is_multi_item(self, message: str) -> bool:
         """True if the message looks like several transactions (a list, or 2+ amounts)."""
         lines = [l for l in message.splitlines() if re.search(r"\d", l)]
@@ -595,6 +691,14 @@ class AgentOrchestrator:
                     items = self._extract_line_items(message, default_currency)
                 if len(items) >= 2:
                     return self._record_items(items, user_id, space, start, forced_category=forced_category)
+
+            # Step 0a4: Ambiguous spoken amount ("eight ten" → £8.10 or £810?).
+            # Don't guess about money — offer a one-tap choice.
+            amb = self._ambiguous_amount(message, default_currency, space, forced_category)
+            if amb is not None:
+                labels = " or ".join(format_amount(c["amount"], c["currency"]) for c in amb["candidates"])
+                return self._result(False, None, f"🤔 Did you mean {labels}? Tap one 👇",
+                                    start, pending=amb)
 
             # Step 0: Is this a correction to an existing entry, or a new one?
             classification = self.corrector.classify(message, self.memory.recent(domain="finance"))

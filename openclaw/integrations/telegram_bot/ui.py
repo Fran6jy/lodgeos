@@ -15,6 +15,20 @@ from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 BRAND = os.environ.get("BRAND_NAME", "LodgeOS")
 
 
+# Per-space icon so the user always knows which space they're in.
+_SPACE_ICONS = {"personal": "🏠", "business": "💼", "property": "🏢"}
+
+
+def space_icon(space: str) -> str:
+    return _SPACE_ICONS.get((space or "Personal").strip().lower(), "🗂")
+
+
+def space_chip(space: str) -> str:
+    """A small always-visible label, e.g. '🏠 Personal' / '💼 Business'."""
+    space = space or "Personal"
+    return f"{space_icon(space)} {space}"
+
+
 def main_menu_kb() -> InlineKeyboardMarkup:
     """The home screen — a 2-column grid of the primary actions."""
     return InlineKeyboardMarkup([
@@ -178,10 +192,10 @@ def tutorial(step: int):
     return text, InlineKeyboardMarkup(kb)
 
 
-def welcome(name: str = "") -> str:
+def welcome(name: str = "", space: str = "Personal") -> str:
     hi = f" {name}" if name else ""
     return (
-        f"✨ <b>{BRAND}</b>\n"
+        f"✨ <b>{BRAND}</b>  ·  {space_chip(space)}\n"
         f"Your money, in plain language.\n"
         f"────────────────────\n"
         f"Hi{hi} 👋  Just talk to me — type, speak, or snap a photo:\n\n"
@@ -204,7 +218,7 @@ def help_text() -> str:
         "• <i>Paid £45 for Uber</i>\n"
         "• <i>Got salary £3200</i>\n"
         "• Got money back? <i>Refund £10 for shoes</i>\n"
-        "• Many at once: <i>10 on rice and 20 on soap</i>\n"
+        "• Many at once: <i>£10 on rice and £20 on soap</i>\n"
         "Works in any money — £, $, ₦, € … I keep each on its own.\n"
         "I sort it into the right group and show you a tick ✅.\n\n"
 

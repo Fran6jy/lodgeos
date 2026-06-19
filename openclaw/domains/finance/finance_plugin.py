@@ -616,9 +616,9 @@ class FinancePlugin(BasePlugin):
         else:
             lines.append(f"✅ Recorded {rtype}: {description}")
 
-        # Show the Space only when it's not the default, to avoid clutter.
-        if space and space != "Personal":
-            lines.append(f"   🗂 Space: {space}")
+        # Always show which Space this landed in, so the user is never unsure.
+        _icons = {"Personal": "🏠", "Business": "💼", "Property": "🏢"}
+        lines.append(f"   {_icons.get(space, '🗂')} Space: {space or 'Personal'}")
 
         # Confidence is only surfaced in developer mode to aid debugging.
         if dev and record.get("confidence") is not None:

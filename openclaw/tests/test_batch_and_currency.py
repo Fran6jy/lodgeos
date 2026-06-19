@@ -78,6 +78,24 @@ class TestBatchEntry:
         assert by_amt[10.0]["currency"] == "GBP"
         assert by_amt[20.0]["entities"]["category"] == "Food & Drink"
 
+    def test_ambiguous_spoken_amount_asks(self, orch):
+        # "eight ten" → offer £8.10 or £810 instead of guessing.
+        r = orch.process("spent eight ten on coffee")
+        assert not r.success and "8.10" in r.response and "810" in r.response
+        p = r.pending
+        assert p["action"] == "AMOUNT_CONFIRM" and p["description"] == "coffee"
+        # nothing recorded until the user picks
+        assert orch._storage().query_records(domain="finance", user_id="default") == []
+        # picking the decimal logs £8.10
+        res = orch.record_amount_choice(p, 0, "default")
+        assert res.success and res.record["amount"] == pytest.approx(8.10)
+
+    def test_clear_amount_not_asked(self, orch):
+        # An unambiguous amount must NOT trigger the confirm prompt.
+        for msg in ("spent £8.10 on coffee", "spent 5 on coffee", "spent 810 on rent"):
+            r = orch.process(msg)
+            assert getattr(r, "pending", None) is None, msg
+
     def test_single_line_not_batched(self, orch):
         r = orch.process("Spent £4.50 on coffee")
         assert r.success
