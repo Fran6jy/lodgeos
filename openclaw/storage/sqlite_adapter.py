@@ -452,6 +452,44 @@ class SQLiteAdapter:
             )
             return cur.rowcount
 
+    def delete_all_budgets(self, user_id: str, period: str = "monthly",
+                           space: str = "Personal") -> int:
+        """Delete every budget in a space. Returns rows removed."""
+        with self._conn() as conn:
+            cur = conn.execute(
+                "DELETE FROM budgets WHERE user_id=? AND COALESCE(space,'Personal')=? AND period=?",
+                (user_id, space, period),
+            )
+            return cur.rowcount
+
+    def rename_budget(self, user_id: str, old_category: str, new_category: str,
+                      period: str = "monthly", space: str = "Personal") -> bool:
+        """Rename a budget's category, keeping its amount/currency. Returns True if
+        a matching budget was found and renamed."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT amount, currency FROM budgets WHERE user_id=? AND COALESCE(space,'Personal')=? "
+                "AND lower(category)=lower(?) AND period=?",
+                (user_id, space, old_category, period),
+            ).fetchone()
+            if not row:
+                return False
+            conn.execute(
+                "DELETE FROM budgets WHERE user_id=? AND COALESCE(space,'Personal')=? "
+                "AND lower(category)=lower(?) AND period=?",
+                (user_id, space, old_category, period),
+            )
+            import uuid as _uuid
+            conn.execute(
+                """INSERT INTO budgets (id, user_id, space, category, amount, currency, period, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(user_id, space, category, period) DO UPDATE SET amount=excluded.amount,
+                   currency=excluded.currency""",
+                (str(_uuid.uuid4()), user_id, space, new_category, row["amount"], row["currency"],
+                 period, datetime.now().isoformat()),
+            )
+            return True
+
     def get_budgets(self, user_id: str, period: str = "monthly",
                     space: Optional[str] = None) -> List[Dict[str, Any]]:
         clauses = ["user_id = ?", "period = ?"]

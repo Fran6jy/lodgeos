@@ -672,7 +672,7 @@ class FinancePlugin(BasePlugin):
         s, e = current_month_range()
         scope = f" · {space}" if space else ""
         lines = [f"📋 Monthly Budget Report{scope}", ""]
-        for b in budgets:
+        for b in sorted(budgets, key=lambda x: x["category"].lower()):
             cur = b.get("currency") or "GBP"
             # Compare spending only in the budget's own currency (no FX conversion).
             spent = self.db.sum_amount(
@@ -682,14 +682,24 @@ class FinancePlugin(BasePlugin):
             )
             remaining = b["amount"] - spent
             pct = (spent / b["amount"] * 100) if b["amount"] > 0 else 0
-            status = "⚠️ " if remaining < 0 else "✅ "
-            lines.append(
-                f"{status}{b['category']:<20} "
-                f"Spent: {format_amount(spent, cur):>10}  "
-                f"Budget: {format_amount(b['amount'], cur):>10}  "
-                f"Remaining: {format_amount(remaining, cur):>10}  ({pct:.0f}%)"
-            )
-        return "\n".join(lines)
+            # Each budget as a block: name + limit, a bar, then spent / remaining.
+            if remaining < 0:
+                head = f"⚠️ {b['category']} — {format_amount(b['amount'], cur)}/mo"
+                tail = f"{format_amount(spent, cur)} spent · {format_amount(-remaining, cur)} OVER"
+            else:
+                head = f"🎯 {b['category']} — {format_amount(b['amount'], cur)}/mo"
+                tail = f"{format_amount(spent, cur)} spent · {format_amount(remaining, cur)} left"
+            lines.append(head)
+            lines.append(f"   {self._bar(pct)}  {tail}")
+            lines.append("")
+        return "\n".join(lines).rstrip()
+
+    @staticmethod
+    def _bar(pct: float, width: int = 10) -> str:
+        """A 10-char progress bar, e.g. '███░░░░░░░ 30%'. Clamped at 100% (over
+        budget is shown in the text)."""
+        filled = max(0, min(width, round(pct / 100 * width)))
+        return "█" * filled + "░" * (width - filled) + f" {min(pct, 999):.0f}%"
 
     def _income_summary(self, user_id: Optional[str] = None, space: Optional[str] = None) -> str:
         uid = user_id or self.default_user

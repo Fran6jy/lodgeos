@@ -527,9 +527,10 @@ async def _finalise(pm, result, user_id: str, prefix: str = "") -> None:
     if getattr(result, "pending", None):
         payload = {**result.pending, "user_id": user_id}
         token = _sessions.put(payload)
-        if payload.get("action") == "VOID_ALL":
+        if payload.get("action") in ("VOID_ALL", "CLEAR_BUDGETS"):
+            label = ("void all" if payload.get("action") == "VOID_ALL" else "delete all budgets")
             kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton(f"✅ Yes, void all {payload.get('count', '')}", callback_data=f"corr|{token}|confirm")],
+                [InlineKeyboardButton(f"✅ Yes, {label} ({payload.get('count', '')})", callback_data=f"corr|{token}|confirm")],
                 [InlineKeyboardButton("✖️ Cancel", callback_data=f"corr|{token}|cancel")],
             ])
         elif payload.get("action") == "AMOUNT_CONFIRM":
@@ -622,6 +623,11 @@ async def correction_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     if choice == "confirm" and payload.get("action") == "VOID_ALL":
         orch, _ = _get_orchestrator()
         result = orch.apply_void_all(payload["user_id"], space=payload.get("space"))
+        await query.edit_message_text(result.response)
+        return
+    if choice == "confirm" and payload.get("action") == "CLEAR_BUDGETS":
+        orch, _ = _get_orchestrator()
+        result = orch.apply_clear_budgets(payload["user_id"], space=payload.get("space"))
         await query.edit_message_text(result.response)
         return
     if payload.get("action") == "AMOUNT_CONFIRM":

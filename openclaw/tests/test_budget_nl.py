@@ -138,6 +138,41 @@ def test_greeting_not_recorded(orch):
     assert orch._storage().query_records(user_id="default") == []
 
 
+def test_rename_budget(orch):
+    orch.process("set budget for food 100")
+    r = orch.process("rename the food budget to groceries")
+    assert "Renamed" in r.response
+    cats = {b["category"]: b["amount"] for b in orch._storage().get_budgets("default", "monthly")}
+    assert cats == {"Groceries": 100}      # amount preserved, old gone
+
+
+def test_delete_all_budgets_confirms_then_clears(orch):
+    orch.process("set budget for food 100")
+    orch.process("set budget for transport 50")
+    r = orch.process("delete all budgets")
+    assert not r.success and r.pending["action"] == "CLEAR_BUDGETS"
+    assert len(orch._storage().get_budgets("default", "monthly")) == 2   # nothing gone yet
+    res = orch.apply_clear_budgets("default", r.pending["space"])
+    assert "Deleted 2" in res.response
+    assert orch._storage().get_budgets("default", "monthly") == []
+
+
+def test_budget_report_layout(orch):
+    orch.process("set budget for transport 50")
+    orch.process("spent 30 on bus")
+    report = orch.router._registry["finance"]._budget_report("default", space="Personal")
+    assert "Transport — £50.00/mo" in report
+    assert "£30.00 spent · £20.00 left" in report
+    assert "█" in report and "60%" in report     # progress bar present
+
+
+def test_budget_report_over_budget(orch):
+    orch.process("set budget for transport 50")
+    orch.process("spent 70 on taxi")
+    report = orch.router._registry["finance"]._budget_report("default", space="Personal")
+    assert "OVER" in report and "⚠️" in report
+
+
 def test_normal_expense_not_hijacked(orch):
     r = orch.process("Spent £5 on a budget airline snack")
     assert r.success

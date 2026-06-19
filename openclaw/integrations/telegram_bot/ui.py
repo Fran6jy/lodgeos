@@ -245,7 +245,8 @@ def help_text() -> str:
         "• <i>Set budget for food 100</i>\n"
         "• See them: <i>show my budgets</i>  (or /budget)\n"
         "• Spend from one: <i>spent 20 from the food budget</i>\n"
-        "• Remove one: <i>delete the food budget</i>\n"
+        "• Rename one: <i>rename the food budget to groceries</i>\n"
+        "• Remove one: <i>delete the food budget</i>  ·  all: <i>delete all budgets</i>\n"
         "• Turn a price list into budgets: <i>turn this list into a budget</i>\n\n"
 
         "<b>6️⃣ KEEP THINGS SEPARATE</b> 🗂\n"

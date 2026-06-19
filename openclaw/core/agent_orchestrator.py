@@ -220,8 +220,33 @@ class AgentOrchestrator:
         conversion = bool(re.search(r"\b(convert|turn|use|save|make)\b", low))
         delete_verb = bool(re.search(r"\b(delete|void|cancel|remove|undo|drop|scrap|clear)\b", low))
         query_verb = bool(re.search(r"\b(show|view|see|list|what|whats|how much|check|my budgets?)\b", low))
+        rename_verb = bool(re.search(r"\b(rename|relabel)\b", low))
+        all_word = bool(re.search(r"\b(all|every|everything)\b", low))
 
-        # 0a) Delete/void a budget ("delete the food budget").
+        # 0a0) Rename a budget ("rename the food budget to groceries").
+        if has_budget and rename_verb:
+            mm = re.search(r"\brename\s+(?:the\s+|my\s+)?(.+?)\s+budget\s+to\s+(.+)$", message, re.IGNORECASE)
+            if mm and db:
+                old = self._budget_name_ref(f"{mm.group(1)} budget", user_id, space) or mm.group(1).strip().title()
+                new = self._normalize_budget_name(mm.group(2))
+                if db.rename_budget(user_id, old, new, "monthly", space):
+                    return {"result": self._result(True, None, f"✏️ Renamed “{old}” budget to “{new}”.",
+                                                   start, domain="finance")}
+                return {"result": self._result(False, None, f"I couldn't find a “{old}” budget to rename.", start)}
+            return {"result": self._result(False, None,
+                    "Rename like this: “rename the Food budget to Groceries”.", start)}
+
+        # 0a1) Delete ALL budgets — needs confirmation.
+        if has_budget and delete_verb and all_word:
+            n = len(db.get_budgets(user_id, "monthly", space=space)) if db else 0
+            if n == 0:
+                return {"result": self._result(False, None, f"No budgets to delete in {space}.", start)}
+            return {"result": self._result(
+                False, None,
+                f"⚠️ This will delete ALL {n} budget(s) in your {space} space. Are you sure?",
+                start, pending={"action": "CLEAR_BUDGETS", "space": space, "count": n, "candidates": []})}
+
+        # 0a2) Delete/void one budget ("delete the food budget").
         if has_budget and delete_verb:
             cat = self._budget_name_ref(message, user_id, space)
             if cat and db and db.delete_budget(user_id, cat, "monthly", space):
@@ -879,6 +904,23 @@ class AgentOrchestrator:
         return self._result(True, None,
                             f"🗑️ Voided {n} entries in {space or 'all spaces'}. "
                             f"They're excluded from totals but kept for audit.", start)
+
+    def apply_clear_budgets(self, user_id: str, space: Optional[str] = None):
+        """Confirmed: delete every budget in the space."""
+        start = time.perf_counter()
+        db = self._storage()
+        if db is None:
+            return self._result(False, None, "Storage unavailable.", start)
+        n = db.delete_all_budgets(user_id, "monthly", space or "Personal")
+        return self._result(True, None, f"🗑️ Deleted {n} budget(s) in {space or 'Personal'}.",
+                            start, domain="finance")
+
+    def _normalize_budget_name(self, raw: str) -> str:
+        """Clean a typed budget name and snap it to a standard category when known."""
+        from openclaw.domains.finance.finance_plugin import _infer_category
+        name = " ".join(w for w in re.sub(r"[^a-zA-Z &]", " ", raw).split() if len(w) >= 2).strip().title()
+        canon = _infer_category(name)
+        return canon if canon != "Other" else (name or "Other")
 
     def apply_correction(self, record_id, action, updates, user_id="default"):
         """Apply a correction to a specific record (used by interactive selection)."""
