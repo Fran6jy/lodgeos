@@ -72,56 +72,132 @@ def _plain(s: str) -> str:
     return _EMOJI_RE.sub("", s or "").strip(" ·-")
 
 
-def monthly_wrapped(recap: dict, brand: str = "LodgeOS", currency_symbol: str = "£") -> bytes:
-    """Render a shareable 'Wrapped'-style recap poster. Returns PNG bytes."""
-    fig, ax = plt.subplots(figsize=(6, 8), dpi=160)
-    fig.patch.set_facecolor(_BG)
-    ax.set_facecolor(_BG)
-    ax.axis("off")
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0, 1)
+# ── Premium "Wrapped" poster (Pillow) ──────────────────────────────────────
+# A curated, tonal green/teal/sage palette — cohesive, not stark primaries.
+_W_BG = (13, 17, 23)        # near-black canvas
+_W_CARD = (22, 28, 36)      # highlight card / track base (lighter than canvas)
+_W_BORDER = (38, 46, 58)
+_W_TEXT = (240, 244, 248)
+_W_MUTED = (140, 150, 162)
+_W_ACCENT = (52, 211, 153)  # emerald
+_W_GLOW = (59, 130, 246)    # soft blue ambient
+_W_CURATED = {
+    "Food & Drink": "#34D399", "Groceries": "#10B981", "Transport": "#86B8A1",
+    "Shopping": "#6EE7C7", "Utilities": "#5EAAD8", "Entertainment": "#7FB3D5",
+    "Health": "#9AE6B4", "Rent": "#A3B8CC", "Education": "#5EC8C0",
+    "Marketing": "#B5C99A", "Salary": "#34D399", "Freelance": "#6EE7C7",
+    "Investment": "#5EAAD8", "Income": "#34D399", "Other": "#8FA3AD",
+}
 
-    def t(x, y, s, **kw):
-        ax.text(x, y, s, transform=ax.transAxes, **kw)
+_FONT_DIR = __import__("os").path.join(__import__("os").path.dirname(__file__), "assets", "fonts")
 
-    # Header
-    t(0.5, 0.95, f"{recap['label']}  ·  WRAPPED", ha="center", color=_FG, fontsize=21, fontweight="bold")
-    t(0.5, 0.905, f"{_plain(recap['space'])} · {brand}", ha="center", color=_MUTED, fontsize=12)
+
+def _hex(h):
+    h = h.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _blend(bg, fg, t):
+    return tuple(round(bg[i] + (fg[i] - bg[i]) * t) for i in range(3))
+
+
+def _wfont(size, kind="regular"):
+    """Load a premium font (Clash Display / Inter dropped into assets/fonts) if
+    present, else fall back to bundled DejaVu — keeping a real weight hierarchy."""
+    import os
+    from PIL import ImageFont
+    names = {
+        "display": ["ClashDisplay-Bold.ttf", "ClashDisplay-Semibold.ttf", "Inter-Bold.ttf"],
+        "bold": ["Inter-Bold.ttf", "Inter-SemiBold.ttf"],
+        "medium": ["Inter-Medium.ttf", "Inter-Regular.ttf"],
+        "regular": ["Inter-Regular.ttf"],
+    }[kind]
+    for n in names:
+        p = os.path.join(_FONT_DIR, n)
+        if os.path.exists(p):
+            return ImageFont.truetype(p, size)
+    import matplotlib.font_manager as fm
+    weight = "bold" if kind in ("display", "bold") else "normal"
+    return ImageFont.truetype(fm.findfont(fm.FontProperties(weight=weight)), size)
+
+
+def monthly_wrapped(recap: dict, brand: str = "LodgeOS", currency_symbol: str = "£",
+                    bot_username: str = "LodgeOS_bot") -> bytes:
+    """Render a premium, shareable 'Wrapped' recap poster. Returns PNG bytes."""
+    from PIL import Image, ImageDraw, ImageFilter
+    W, H, M = 1080, 1350, 88
+    base = Image.new("RGB", (W, H), _W_BG)
+
+    # Ambient lighting: a soft radial blue glow behind the hero number.
+    glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow)
+    gx, gy, gr = W // 2, 430, 300
+    gd.ellipse([gx - gr, gy - gr, gx + gr, gy + gr], fill=_W_GLOW + (46,))
+    glow = glow.filter(ImageFilter.GaussianBlur(150))
+    base = Image.alpha_composite(base.convert("RGBA"), glow).convert("RGB")
+    d = ImageDraw.Draw(base)
+
+    def text(xy, s, font, fill, anchor="la"):
+        d.text(xy, s, font=font, fill=fill, anchor=anchor)
+
+    # Header (kicker + brand)
+    text((W // 2, 86), f"{recap['label'].upper()}   ·   WRAPPED", _wfont(40, "bold"), _W_TEXT, "ma")
+    text((W // 2, 140), f"{_plain(recap['space'])} · {brand}", _wfont(28, "regular"), _W_MUTED, "ma")
 
     if recap.get("empty"):
-        t(0.5, 0.5, "Nothing logged yet —\nstart and your Wrapped fills up ✨",
-          ha="center", va="center", color=_MUTED, fontsize=15)
-        return _save(fig)
+        text((W // 2, H // 2 - 20), "Nothing logged yet", _wfont(46, "display"), _W_TEXT, "mm")
+        text((W // 2, H // 2 + 40), "start, and your Wrapped fills up.", _wfont(30, "regular"), _W_MUTED, "mm")
+        text((W // 2, H - 70), f"Tracked effortlessly via Telegram @{bot_username}",
+             _wfont(27, "medium"), _W_MUTED, "ma")
+        return _png(base)
 
-    # Hero number
-    t(0.5, 0.82, "you spent", ha="center", color=_MUTED, fontsize=13)
-    t(0.5, 0.745, f"{currency_symbol}{recap['spent']:,.0f}", ha="center", color="#388bfd",
-      fontsize=44, fontweight="bold")
+    # Hero
+    text((W // 2, 300), "YOU SPENT", _wfont(32, "medium"), _W_MUTED, "ma")
+    text((W // 2, 360), f"{currency_symbol}{recap['spent']:,.0f}", _wfont(150, "display"), _W_TEXT, "ma")
 
-    # Category bars
-    y = 0.62
+    # Category rows — strict grid: labels locked left, values locked right.
     cats = list(recap["by_category"].items())[:5]
-    top_val = cats[0][1] if cats else 1
-    for i, (cat, amt) in enumerate(cats):
-        frac = (amt / top_val) if top_val else 0
-        ax.add_patch(plt.Rectangle((0.08, y - 0.018), 0.84 * frac, 0.03,
-                                   transform=ax.transAxes, color=PALETTE[i % len(PALETTE)], zorder=2))
-        ax.add_patch(plt.Rectangle((0.08, y - 0.018), 0.84, 0.03,
-                                   transform=ax.transAxes, color="#1c2230", zorder=1))
-        t(0.08, y + 0.022, _plain(cat), color=_FG, fontsize=11)
-        t(0.92, y + 0.022, f"{currency_symbol}{amt:,.0f}", ha="right", color=_MUTED, fontsize=11)
-        y -= 0.075
+    top_val = max((v for _, v in cats), default=1) or 1
+    y = 600
+    bar_h, step = 22, 96
+    for cat, amt in cats:
+        color = _hex(_W_CURATED.get(cat, "#8FA3AD"))
+        track = _blend(_W_BG, color, 0.13)              # ~10–13% tint track
+        text((M, y), _plain(cat), _wfont(38, "medium"), _W_TEXT, "lm")
+        text((W - M, y), f"{currency_symbol}{amt:,.0f}", _wfont(38, "bold"), _W_TEXT, "rm")
+        by = y + 34
+        d.rounded_rectangle([M, by, W - M, by + bar_h], radius=bar_h // 2, fill=track)
+        fw = max(bar_h, int((W - 2 * M) * (amt / top_val)))
+        d.rounded_rectangle([M, by, M + fw, by + bar_h], radius=bar_h // 2, fill=color)
+        y += step
 
-    # Biggest single + badges
+    # Highlight card — isolate the key insight in its own rounded container.
     big = recap.get("biggest")
     if big:
-        t(0.08, 0.215, "biggest single", color=_MUTED, fontsize=11)
-        t(0.92, 0.215, f"{currency_symbol}{(big.get('amount') or 0):,.0f} · {_plain(big.get('description') or '')[:22]}",
-          ha="right", color=_FG, fontsize=11)
-    for i, badge in enumerate(recap.get("badges", [])[:3]):
-        t(0.5, 0.15 - i * 0.045, _plain(badge), ha="center", color="#3fb950", fontsize=12.5, fontweight="bold")
+        cy0 = y + 18
+        cy1 = cy0 + 150
+        d.rounded_rectangle([M, cy0, W - M, cy1], radius=28, fill=_W_CARD, outline=_W_BORDER, width=2)
+        text((M + 40, cy0 + 36), "BIGGEST SINGLE", _wfont(26, "bold"), _W_ACCENT, "lm")
+        text((M + 40, cy0 + 100), _plain(big.get("description") or "")[:30], _wfont(34, "medium"), _W_TEXT, "lm")
+        text((W - M - 40, cy0 + 100), f"{currency_symbol}{(big.get('amount') or 0):,.0f}",
+             _wfont(44, "display"), _W_TEXT, "rm")
+        y = cy1
 
-    return _save(fig)
+    # Badges — one cohesive centered line (emerald), no boxes-as-glyphs.
+    badges = [_plain(b) for b in recap.get("badges", []) if _plain(b)]
+    if badges:
+        text((W // 2, y + 70), "   ·   ".join(badges[:3]), _wfont(30, "medium"), _W_ACCENT, "ma")
+
+    # Footer — organic growth: where to find the app.
+    text((W // 2, H - 64), f"Tracked effortlessly via Telegram @{bot_username}",
+         _wfont(28, "medium"), _W_MUTED, "ma")
+    return _png(base)
+
+
+def _png(img) -> bytes:
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
 
 
 def _empty_card(title: str) -> bytes:

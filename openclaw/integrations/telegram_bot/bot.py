@@ -210,7 +210,8 @@ def _build_wrapped(fp, uid: str, bot_username: str = "", month_offset: int = 0):
     space = fp.db.get_active_space(uid)
     recap = fp.monthly_recap(uid, space=space, month_offset=month_offset)
     symbol = CODE_SYMBOLS.get(recap["currency"], "") or recap["currency"] + " "
-    png = charts.monthly_wrapped(recap, brand=ui.BRAND, currency_symbol=symbol)
+    png = charts.monthly_wrapped(recap, brand=ui.BRAND, currency_symbol=symbol,
+                                 bot_username=bot_username or "LodgeOS_bot")
     caption = f"✨ <b>My {recap['label']} on {ui.BRAND}</b> — tracked just by talking to a bot."
     link = _share_link(bot_username, uid)
     if link:
