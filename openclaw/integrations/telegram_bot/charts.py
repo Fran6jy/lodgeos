@@ -68,8 +68,18 @@ _EMOJI_RE = re.compile(
 
 
 def _plain(s: str) -> str:
-    """Drop emoji/symbols matplotlib's font can't draw (they'd render as boxes)."""
+    """Drop emoji/symbols the font can't draw (they'd render as boxes)."""
     return _EMOJI_RE.sub("", s or "").strip(" ·-")
+
+
+def _clean_desc(s: str) -> str:
+    """Turn a raw description ('spent 12000 on groceries') into a tidy label
+    ('Groceries') for the highlight card."""
+    s = _plain(s)
+    s = re.sub(r"^(spent|spend|paid|pay|bought|buy|got|received|earned)\b", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"[£$€₦]?\s*\d[\d,]*(?:\.\d+)?", "", s)
+    s = re.sub(r"^\s*(on|for|at|in|to)\b", "", s.strip(), flags=re.IGNORECASE)
+    return (s.strip().title() or "Entry")[:28]
 
 
 # ── Premium "Wrapped" poster (Pillow) ──────────────────────────────────────
@@ -102,20 +112,29 @@ def _blend(bg, fg, t):
 
 
 def _wfont(size, kind="regular"):
-    """Load a premium font (Clash Display / Inter dropped into assets/fonts) if
-    present, else fall back to bundled DejaVu — keeping a real weight hierarchy."""
+    """Load the recap fonts. Prefers Clash Display (if dropped into assets/fonts)
+    for display text and Inter for body; uses the vendored Space Grotesk + Inter
+    variable fonts otherwise; falls back to bundled DejaVu as a last resort.
+    Selects the right weight from the variable fonts via named instances."""
     import os
     from PIL import ImageFont
-    names = {
-        "display": ["ClashDisplay-Bold.ttf", "ClashDisplay-Semibold.ttf", "Inter-Bold.ttf"],
-        "bold": ["Inter-Bold.ttf", "Inter-SemiBold.ttf"],
-        "medium": ["Inter-Medium.ttf", "Inter-Regular.ttf"],
-        "regular": ["Inter-Regular.ttf"],
+    # (file, variable-instance-name) candidates per role, in order of preference.
+    plan = {
+        "display": [("ClashDisplay-Bold.ttf", None), ("SpaceGrotesk.ttf", "Bold"), ("Inter.ttf", "Bold")],
+        "bold": [("Inter-Bold.ttf", None), ("Inter.ttf", "Bold")],
+        "medium": [("Inter-Medium.ttf", None), ("Inter.ttf", "Medium")],
+        "regular": [("Inter-Regular.ttf", None), ("Inter.ttf", "Regular")],
     }[kind]
-    for n in names:
-        p = os.path.join(_FONT_DIR, n)
+    for fname, variation in plan:
+        p = os.path.join(_FONT_DIR, fname)
         if os.path.exists(p):
-            return ImageFont.truetype(p, size)
+            font = ImageFont.truetype(p, size)
+            if variation:
+                try:
+                    font.set_variation_by_name(variation)
+                except Exception:
+                    pass
+            return font
     import matplotlib.font_manager as fm
     weight = "bold" if kind in ("display", "bold") else "normal"
     return ImageFont.truetype(fm.findfont(fm.FontProperties(weight=weight)), size)
@@ -178,7 +197,7 @@ def monthly_wrapped(recap: dict, brand: str = "LodgeOS", currency_symbol: str = 
         cy1 = cy0 + 150
         d.rounded_rectangle([M, cy0, W - M, cy1], radius=28, fill=_W_CARD, outline=_W_BORDER, width=2)
         text((M + 40, cy0 + 36), "BIGGEST SINGLE", _wfont(26, "bold"), _W_ACCENT, "lm")
-        text((M + 40, cy0 + 100), _plain(big.get("description") or "")[:30], _wfont(34, "medium"), _W_TEXT, "lm")
+        text((M + 40, cy0 + 100), _clean_desc(big.get("description") or ""), _wfont(34, "medium"), _W_TEXT, "lm")
         text((W - M - 40, cy0 + 100), f"{currency_symbol}{(big.get('amount') or 0):,.0f}",
              _wfont(44, "display"), _W_TEXT, "rm")
         y = cy1
