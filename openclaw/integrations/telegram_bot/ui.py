@@ -274,7 +274,17 @@ def help_text() -> str:
 
         "💡 <b>Easiest of all:</b> send /menu and just tap the buttons — "
         "every feature here is one tap away."
+        + _support_line()
     ))
+
+
+def _support_line() -> str:
+    """A gentle 'support the developer' nudge appended to the pinned guide."""
+    url = os.environ.get("DONATE_URL", "").strip().rstrip("/")
+    if not url:
+        return "\n\n💖 <b>Enjoying LodgeOS?</b> Tap 💖 Support in /menu to keep it free."
+    return (f"\n\n💖 <b>Enjoying LodgeOS?</b> It's free and runs on coffee — "
+            f"<a href=\"{url}\">support the developer here</a> ☕")
 
 
 def examples_card() -> str:

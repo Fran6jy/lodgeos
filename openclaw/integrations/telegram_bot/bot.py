@@ -110,13 +110,14 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     is_new = not fp.db.get_tutorial_done(uid) and not fp.db.query_records(domain="finance", user_id=uid, limit=1)
     # New users join the gentle engagement loop by default (toggle off via /reminders).
     if is_new:
-        fp.db.set_reminder(uid, "digest", True)
-        fp.db.set_reminder(uid, "wrapped", True)
+        for _k in ("digest", "briefing", "wrapped"):
+            fp.db.set_reminder(uid, _k, True)
 
     # Pin the "How to use" guide once, so it's always one tap away at the top.
     if not fp.db.get_help_pinned(uid):
         try:
-            msg = await update.message.reply_text(ui.help_text(), parse_mode="HTML")
+            msg = await update.message.reply_text(ui.help_text(), parse_mode="HTML",
+                                                  disable_web_page_preview=True)
             await context.bot.pin_chat_message(update.effective_chat.id, msg.message_id,
                                                disable_notification=True)
             fp.db.set_help_pinned(uid)
@@ -159,7 +160,8 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(ui.help_text(), parse_mode="HTML", reply_markup=ui.back_kb())
+    await update.message.reply_text(ui.help_text(), parse_mode="HTML", reply_markup=ui.back_kb(),
+                                    disable_web_page_preview=True)
 
 
 async def examples_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
