@@ -31,22 +31,24 @@ def space_chip(space: str) -> str:
 
 def main_menu_kb() -> InlineKeyboardMarkup:
     """The home screen — a 2-column grid of the primary actions."""
+    # Ordered by how often a user needs it: status → decisions → detail →
+    # organize → power/delight → learn → support.
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📊 This Week", callback_data="menu|summary"),
          InlineKeyboardButton("🗓 This Month", callback_data="menu|month")],
         [InlineKeyboardButton("🎯 Budgets", callback_data="menu|budget"),
-         InlineKeyboardButton("💰 Income", callback_data="menu|income")],
-        [InlineKeyboardButton("🎁 Wrapped", callback_data="menu|wrapped"),
+         InlineKeyboardButton("💡 Insights", callback_data="menu|insights")],
+        [InlineKeyboardButton("💰 Income", callback_data="menu|income"),
          InlineKeyboardButton("📉 Spending Chart", callback_data="menu|chart")],
-        [InlineKeyboardButton("💡 Insights", callback_data="menu|insights"),
+        [InlineKeyboardButton("🧾 History", callback_data="menu|history"),
          InlineKeyboardButton("🔁 Subscriptions", callback_data="menu|subs")],
         [InlineKeyboardButton("🗂 Spaces", callback_data="menu|spaces"),
-         InlineKeyboardButton("🧾 History", callback_data="menu|history")],
-        [InlineKeyboardButton("📈 Dashboard", callback_data="menu|dashboard"),
          InlineKeyboardButton("🔔 Reminders", callback_data="menu|reminders")],
-        [InlineKeyboardButton("💖 Support", callback_data="menu|donate"),
-         InlineKeyboardButton("✨ Examples", callback_data="menu|examples")],
-        [InlineKeyboardButton("❓ Help", callback_data="menu|help")],
+        [InlineKeyboardButton("📈 Dashboard", callback_data="menu|dashboard"),
+         InlineKeyboardButton("🎁 Wrapped", callback_data="menu|wrapped")],
+        [InlineKeyboardButton("✨ Examples", callback_data="menu|examples"),
+         InlineKeyboardButton("❓ Help", callback_data="menu|help")],
+        [InlineKeyboardButton("💖 Support", callback_data="menu|donate")],
     ])
 
 
