@@ -125,9 +125,9 @@ class TestBatchEntry:
         assert "₦30.00" in summary
         assert "$2.00" in summary
         assert "$32" not in summary and "$47" not in summary  # no cross-currency sum
-        # Each category shown in its own currency
-        assert "Transport            ₦10.00" in summary
-        assert "Entertainment        $2.00" in summary
+        # Each category shown in its own currency (icon + bold amount)
+        assert "Transport — <b>₦10.00</b>" in summary
+        assert "Entertainment — <b>$2.00</b>" in summary
 
     def test_batch_without_currency_defaults_gbp(self, orch):
         r = orch.process("1. Spent 10 on lunch\n2. Spent 5 on coffee")

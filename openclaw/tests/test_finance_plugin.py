@@ -126,11 +126,11 @@ class TestFinancePluginSummarize:
         plugin.store(expense_record)
         summary = plugin.summarize("week")
         assert isinstance(summary, str)
-        assert "Finance Summary" in summary
+        assert "Spent" in summary
 
     def test_summarize_empty_period(self, plugin):
         summary = plugin.summarize("month")
-        assert "No records found" in summary
+        assert "No records yet" in summary
 
 
 class TestBudgets:

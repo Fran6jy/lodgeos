@@ -144,6 +144,30 @@ async def examples_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await update.message.reply_text(ui.examples_card(), parse_mode="HTML", reply_markup=ui.back_kb())
 
 
+def _fmt_day(iso: str) -> str:
+    """'2026-06-23T..' → '23 Jun'."""
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat(iso).strftime("%-d %b") if iso else ""
+    except (ValueError, TypeError):
+        try:
+            return datetime.fromisoformat(iso).strftime("%d %b").lstrip("0")
+        except Exception:
+            return (iso or "")[:10]
+
+
+def _tx_line(r) -> str:
+    """One transaction as tidy HTML: icon · date · bold amount — description."""
+    from html import escape
+    from openclaw.domains.finance.finance_plugin import category_icon
+    is_income = r.get("type") == "income"
+    icon = "💰" if is_income else category_icon(r.get("entities", {}).get("category", "Other"))
+    amt = format_amount(r.get("amount") or 0, r.get("currency", "GBP"))
+    sign = "+" if is_income else ""
+    desc = escape((r.get("description", "") or "")[:28])
+    return f"{icon} <i>{_fmt_day(r.get('timestamp',''))}</i>  <b>{sign}{amt}</b> — {desc}"
+
+
 def _history_page(fp, user_id: str, offset: int = 0, n: int = 10):
     """Return (card_text, keyboard) for one page of history."""
     rows = fp.db.query_records(domain="finance", user_id=user_id, limit=offset + n + 1)
@@ -151,15 +175,10 @@ def _history_page(fp, user_id: str, offset: int = 0, n: int = 10):
     has_more = len(rows) > offset + n
     if not page:
         return ui.card("🧾 History", "No more records." if offset else
-                       "No records yet — send me an expense to start."), ui.history_kb(offset, False)
-    lines = []
-    for r in page:
-        ts = (r.get("timestamp", "") or "")[:10]
-        amt = format_amount(r.get("amount") or 0, r.get("currency", "GBP"))
-        sign = "＋" if r.get("type") == "income" else "－"
-        lines.append(f"{ts}  {sign}{amt:>10}  {r.get('description','')[:24]}")
+                       "No records yet — send me an expense to start. ✨"), ui.history_kb(offset, False)
+    body = "\n".join(_tx_line(r) for r in page)
     title = f"🧾 History  ·  {offset + 1}–{offset + len(page)}"
-    return ui.card(title, "\n".join(lines), mono=True), ui.history_kb(offset, has_more)
+    return ui.card(title, body), ui.history_kb(offset, has_more)
 
 
 async def _dashboard_text(fp, user_id: str) -> str:
@@ -227,7 +246,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         tf = "week" if action == "summary" else "month"
         space = fp.db.get_active_space(uid)
         title = "📊 This Week" if tf == "week" else "🗓 This Month"
-        text = ui.card(title, fp.summarize(tf, uid, space=space), mono=True)
+        text = ui.card(title, fp.summarize(tf, uid, space=space))
         cats = list(fp.category_breakdown(tf, uid, space=space).keys())
         kb = ui.category_kb(cats, tf) if cats else ui.back_kb()
         await q.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
@@ -265,18 +284,18 @@ async def category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     _, fp = _get_orchestrator()
     uid = str(q.from_user.id)
     txs = fp.category_transactions(category, tf, uid, space=fp.db.get_active_space(uid))
-    if not txs:
-        body = "No transactions here."
-    else:
-        total = sum(r.get("amount", 0) or 0 for r in txs)
-        lines = [f"{(r.get('timestamp','') or '')[:10]}  "
-                 f"{format_amount(r.get('amount') or 0, r.get('currency','GBP')):>9}  "
-                 f"{r.get('description','')[:24]}" for r in txs]
-        lines.append("─" * 30)
-        lines.append(f"{'Total':<20}{format_amount(total):>9}")
-        body = "\n".join(lines)
     span = "this week" if tf == "week" else "this month"
-    await q.message.reply_text(ui.card(f"{category} · {span}", body, mono=True),
+    from openclaw.domains.finance.finance_plugin import category_icon
+    if not txs:
+        body = "No transactions here yet."
+    else:
+        cur = txs[0].get("currency", "GBP")
+        total = sum(r.get("amount", 0) or 0 for r in txs)
+        lines = [_tx_line(r) for r in txs]
+        lines.append("─────────────")
+        lines.append(f"<b>Total · {format_amount(total, cur)}</b> · {len(txs)} item{'s' if len(txs) != 1 else ''}")
+        body = "\n".join(lines)
+    await q.message.reply_text(ui.card(f"{category_icon(category)} {category} · {span}", body),
                                parse_mode="HTML", reply_markup=ui.back_kb())
 
 
@@ -292,15 +311,17 @@ async def history_page_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def summary_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _, fp = _get_orchestrator()
-    text = fp.summarize("week", user_id=str(update.effective_user.id))
-    await update.message.reply_text(ui.card("📊 This Week", text, mono=True),
+    uid = str(update.effective_user.id)
+    text = fp.summarize("week", user_id=uid, space=fp.db.get_active_space(uid))
+    await update.message.reply_text(ui.card("📊 This Week", text),
                                     parse_mode="HTML", reply_markup=ui.back_kb())
 
 
 async def month_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _, fp = _get_orchestrator()
-    text = fp.summarize("month", user_id=str(update.effective_user.id))
-    await update.message.reply_text(ui.card("🗓 This Month", text, mono=True),
+    uid = str(update.effective_user.id)
+    text = fp.summarize("month", user_id=uid, space=fp.db.get_active_space(uid))
+    await update.message.reply_text(ui.card("🗓 This Month", text),
                                     parse_mode="HTML", reply_markup=ui.back_kb())
 
 

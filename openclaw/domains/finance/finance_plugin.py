@@ -42,6 +42,25 @@ CATEGORY_KEYWORDS = {
 }
 
 
+CATEGORY_ICONS = {
+    "Food & Drink": "🍽️", "Groceries": "🛒", "Transport": "🚌", "Utilities": "💡",
+    "Shopping": "🛍️", "Entertainment": "🎬", "Marketing": "📣", "Health": "💊",
+    "Education": "📚", "Rent": "🏠", "Salary": "💼", "Freelance": "🧾",
+    "Investment": "📈", "Income": "💰", "Other": "🔖",
+}
+
+
+def category_icon(category: str) -> str:
+    return CATEGORY_ICONS.get(category, "🔖")
+
+
+def _mini_bar(frac: float, width: int = 5) -> str:
+    """A tiny proportion bar like '▰▰▱▱▱' for category share."""
+    frac = max(0.0, min(1.0, frac))
+    filled = round(frac * width)
+    return "▰" * filled + "▱" * (width - filled)
+
+
 def _infer_category(text: str) -> str:
     import re
     text_lower = text.lower()
@@ -159,26 +178,29 @@ class FinancePlugin(BasePlugin):
         def _multi(d):  # "₦30.00 · $2.00"
             return " · ".join(format_amount(v, k) for k, v in sorted(d.items(), key=lambda x: -x[1]) if v)
 
-        scope = f" · {space}" if space else ""
-        lines = [f"📊 {label} Finance Summary{scope}", ""]
+        if not expenses and not income:
+            scope = f" · {space}" if space else ""
+            return f"📊 <b>{label}</b>{scope}\n\nNo records yet — send me an expense to start. ✨"
+
+        sp_icon = {"Personal": "🏠", "Business": "💼", "Property": "🏢"}.get(space, "🗂") if space else ""
+        head = f"{sp_icon} <b>{space}</b> · {label.lower()}" if space else f"<b>{label}</b>"
+        lines = [head, ""]
         if any(exp_by_cur.values()):
-            lines.append(f"💸 Total Spent:  {_multi(exp_by_cur)}")
+            lines.append(f"💸 <b>Spent</b>   {_multi(exp_by_cur)}")
         if any(inc_by_cur.values()):
-            lines.append(f"💰 Total Income: {_multi(inc_by_cur)}")
+            lines.append(f"💰 <b>Income</b>  {_multi(inc_by_cur)}")
         all_curs = {c for c, v in {**exp_by_cur, **inc_by_cur}.items() if v}
         if len(all_curs) == 1 and any(exp_by_cur.values()) and any(inc_by_cur.values()):
             c = next(iter(all_curs))
-            lines.append(f"📈 Net:          {format_amount(inc_by_cur[c] - exp_by_cur[c], c)}")
+            net = inc_by_cur[c] - exp_by_cur[c]
+            lines.append(f"{'📈' if net >= 0 else '📉'} <b>Net</b>     {format_amount(net, c)}")
 
         if cat_by:
-            lines.append("")
-            lines.append("By category:")
+            lines.append("\n<b>Where it went</b>")
             for (cat, c), amt in sorted(cat_by.items(), key=lambda x: -x[1]):
-                lines.append(f"  {cat:<20} {format_amount(amt, c)}")
-
-        if not expenses and not income:
-            lines.append("No records found for this period.")
-
+                share = amt / exp_by_cur[c] if exp_by_cur.get(c) else 0
+                lines.append(f"{category_icon(cat)} {cat} — <b>{format_amount(amt, c)}</b>"
+                             f"  <code>{_mini_bar(share)}</code> {share * 100:.0f}%")
         return "\n".join(lines)
 
     def _budget_remaining_total(self, uid: str, space: Optional[str]) -> Optional[float]:
