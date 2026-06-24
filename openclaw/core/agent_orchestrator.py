@@ -762,6 +762,11 @@ class AgentOrchestrator:
                 return self._result(False, None, f"🤔 Did you mean {labels}? Tap one 👇",
                                     start, pending=amb)
 
+            # Step 0-: Deterministic currency fix ("that £4000 was naira").
+            cur_fix = self._try_currency_correction(message, user_id, space, start)
+            if cur_fix is not None:
+                return cur_fix
+
             # Step 0: Is this a correction to an existing entry, or a new one?
             classification = self.corrector.classify(message, self.memory.recent(domain="finance"))
             intent = classification.get("intent", "RECORD_NEW")
@@ -1005,9 +1010,55 @@ class AgentOrchestrator:
             changes.append(f"category → {updated.get('entities', {}).get('category')}")
         if "description" in clean:
             changes.append(f"description → \"{updated.get('description')}\"")
-        if "currency" in clean:
+        if "currency" in clean and "amount" not in clean:
+            changes.append(f"{old_amt} → {format_amount(updated.get('amount') or 0, updated.get('currency'))}")
+        elif "currency" in clean:
             changes.append(f"currency → {updated.get('currency')}")
         return self._result(True, updated, "✏️ Updated: " + "; ".join(changes), start, domain="finance")
+
+    def _try_currency_correction(self, message, user_id, space, start):
+        """Fix a past entry's currency ("that £4000 was naira", "the 4000 should be
+        in naira") — deterministic, since the LLM hint list misses these. Keeps the
+        number, just relabels the currency. Returns a result or None."""
+        from openclaw.utils.currency_normalizer import SYMBOL_MAP, WORD_MAP, format_amount
+        low = message.lower()
+        if not re.search(r"(naira|ngn|pounds?|sterling|gbp|dollars?|usd|euros?|eur|cedis?|ghs|"
+                         r"rand|zar|shillings?|kes|rupees?|inr|[£$€₦])", low):
+            return None
+        strong = re.search(r"\b(actually|should|meant|wrong|change|changed|convert|correction|"
+                           r"not|supposed|was|were)\b", low)
+        ref = re.search(r"\b(that|last|previous|it|the)\b", low)
+        spend = re.search(r"\b(spent|spend|paid|pay|bought|buy|got|received|earned|salary)\b", low)
+        if not (strong or ref) or (spend and not strong):
+            return None
+        # New currency = a currency token that isn't glued to a number.
+        new_code = None
+        wm = re.search(r"\b(naira|ngn|pounds?|sterling|gbp|dollars?|usd|euros?|eur|cedis?|ghs|"
+                       r"rand|zar|shillings?|kes|rupees?|inr)\b", low)
+        if wm:
+            new_code = WORD_MAP.get(wm.group(1)) or {"sterling": "GBP"}.get(wm.group(1)) or wm.group(1).upper()[:3]
+        else:
+            for m in re.finditer(r"[£$€₦]", message):
+                if not re.match(r"\s*\d", message[m.end():m.end() + 4]):
+                    new_code = SYMBOL_MAP.get(m.group(0)); break
+        if not new_code:
+            return None
+        db = self._storage()
+        if db is None:
+            return None
+        amt_m = re.search(r"(\d[\d,]*(?:\.\d+)?)", message)
+        amount = float(amt_m.group(1).replace(",", "")) if amt_m else None
+        target = None
+        for r in db.query_records(domain="finance", user_id=user_id, limit=50, space=space):
+            if (r.get("currency") or "GBP") == new_code:
+                continue
+            if amount is None or abs((r.get("amount") or 0) - amount) < 0.01:
+                target = r
+                break
+        if not target:
+            return None
+        return self.apply_correction(record_id=target["id"], action="UPDATE_EXISTING",
+                                     updates={"currency": new_code}, user_id=user_id)
 
     def _result(self, success, record, response, start, domain="finance", pending=None):
         elapsed = (time.perf_counter() - start) * 1000

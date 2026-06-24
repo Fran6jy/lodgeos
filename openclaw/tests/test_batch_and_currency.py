@@ -110,6 +110,16 @@ class TestBatchEntry:
         recs = orch._storage().query_records(domain="finance", record_type="expense", user_id="default")
         assert all(r["currency"] == "NGN" for r in recs)
 
+    def test_currency_correction_relabels_record(self, orch):
+        # "that £4000 was naira" fixes the past entry's currency, keeping the number.
+        orch.process("spent 4000 on education")   # defaults GBP here
+        r = orch.process("that £4000 was naira")
+        assert r.success and "₦4,000.00" in r.response
+        recs = orch._storage().query_records(domain="finance", record_type="expense", user_id="default")
+        assert recs[0]["currency"] == "NGN" and recs[0]["amount"] == pytest.approx(4000)
+        # didn't create a second record
+        assert len(recs) == 1
+
     def test_clear_amount_not_asked(self, orch):
         # An unambiguous amount must NOT trigger the confirm prompt.
         for msg in ("spent £8.10 on coffee", "spent 5 on coffee", "spent 810 on rent"):
