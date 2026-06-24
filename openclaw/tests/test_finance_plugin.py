@@ -133,6 +133,23 @@ class TestFinancePluginSummarize:
         assert "No records yet" in summary
 
 
+class TestMonthlyRecap:
+    def test_recap_shape_and_render(self, plugin, db, expense_record):
+        plugin.transform(expense_record)
+        plugin.store(expense_record)
+        recap = plugin.monthly_recap()
+        assert recap["count"] >= 1 and not recap["empty"]
+        assert "spent" in recap and "by_category" in recap and "badges" in recap
+        # poster renders to PNG bytes without raising
+        from openclaw.integrations.telegram_bot import charts
+        png = charts.monthly_wrapped(recap, brand="LodgeOS", currency_symbol="₦")
+        assert isinstance(png, bytes) and png[:8] == b"\x89PNG\r\n\x1a\n"
+
+    def test_recap_empty(self, plugin):
+        recap = plugin.monthly_recap()
+        assert recap["empty"] is True
+
+
 class TestBudgets:
     def test_set_and_get_budget(self, plugin, db):
         result = plugin.set_budget("Food & Drink", 200.0, "monthly")

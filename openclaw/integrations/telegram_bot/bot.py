@@ -192,6 +192,27 @@ async def _dashboard_text(fp, user_id: str) -> str:
     ))
 
 
+async def _send_wrapped(target, fp, uid: str) -> None:
+    """Render the shareable monthly recap poster and send it. `target` is a
+    message or callback-query message that supports reply_photo."""
+    import io
+    from openclaw.integrations.telegram_bot import charts
+    from openclaw.utils.currency_normalizer import CODE_SYMBOLS
+    space = fp.db.get_active_space(uid)
+    recap = fp.monthly_recap(uid, space=space)
+    symbol = CODE_SYMBOLS.get(recap["currency"], "") or recap["currency"] + " "
+    png = charts.monthly_wrapped(recap, brand=ui.BRAND, currency_symbol=symbol)
+    caption = (f"✨ <b>My {recap['label']} on {ui.BRAND}</b> — "
+               f"tracked just by talking to a bot. Get yours 👉 (tap to share)")
+    await target.reply_photo(photo=io.BytesIO(png), caption=caption, parse_mode="HTML",
+                             reply_markup=ui.back_kb())
+
+
+async def wrapped_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _, fp = _get_orchestrator()
+    await _send_wrapped(update.message, fp, str(update.effective_user.id))
+
+
 async def _send_chart(q, fp, uid: str) -> None:
     """Render a spending donut and send it as a photo with category drill-down chips."""
     import io
@@ -237,6 +258,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     if action == "chart":
         await _send_chart(q, fp, uid)
+        return
+    if action == "wrapped":
+        await _send_wrapped(q.message, fp, uid)
         return
     if action == "history":
         text, kb = _history_page(fp, uid, 0)
@@ -781,6 +805,7 @@ def main():
     app.add_handler(CommandHandler("menu", menu_handler))
     app.add_handler(CommandHandler("help", help_handler))
     app.add_handler(CommandHandler("examples", examples_handler))
+    app.add_handler(CommandHandler("wrapped", wrapped_handler))
     app.add_handler(CommandHandler("summary", summary_handler))
     app.add_handler(CommandHandler("month", month_handler))
     app.add_handler(CommandHandler("budget", budget_handler))

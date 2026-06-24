@@ -588,6 +588,64 @@ class FinancePlugin(BasePlugin):
 
         return "\n".join(lines)
 
+    def monthly_recap(self, user_id: Optional[str] = None, space: Optional[str] = None) -> Dict[str, Any]:
+        """Gather a shareable monthly recap (the 'Wrapped' card). Numbers are in
+        the user's primary currency; no balances, nothing sensitive by default."""
+        from collections import defaultdict
+        uid = user_id or self.default_user
+        now = datetime.now()
+        s, e = current_month_range(now)
+        cur = self.default_currency(uid, space)
+        exp = [r for r in self.db.query_records(domain="finance", record_type="expense", user_id=uid,
+                                                since=s.isoformat(), until=e.isoformat(), limit=5000, space=space)
+               if (r.get("currency") or "GBP") == cur]
+        inc = [r for r in self.db.query_records(domain="finance", record_type="income", user_id=uid,
+                                                since=s.isoformat(), until=e.isoformat(), limit=5000, space=space)
+               if (r.get("currency") or "GBP") == cur]
+
+        by_cat: Dict[str, float] = defaultdict(float)
+        for r in exp:
+            by_cat[r.get("entities", {}).get("category", "Other")] += (r.get("amount") or 0)
+        spent = sum(r.get("amount") or 0 for r in exp)
+        income = sum(r.get("amount") or 0 for r in inc)
+        biggest = max(exp, key=lambda r: r.get("amount") or 0, default=None)
+        top = max(by_cat.items(), key=lambda x: x[1], default=(None, 0))
+
+        # Badges — small brag tokens.
+        badges = []
+        streak = self._logging_streak(uid, space)
+        if streak >= 2:
+            badges.append(f"🔥 {streak}-day logging streak")
+        budgets = self.db.get_budgets(uid, "monthly", space=space)
+        if budgets:
+            under = sum(1 for b in budgets
+                        if self.db.sum_amount("finance", "expense", uid, s.isoformat(), e.isoformat(),
+                                              category=b["category"], space=b.get("space"),
+                                              currency=b.get("currency") or cur) <= b["amount"])
+            badges.append(f"🎯 Under budget in {under}/{len(budgets)}")
+        if len(exp) + len(inc):
+            badges.append(f"🧾 {len(exp) + len(inc)} logged")
+
+        return {
+            "label": now.strftime("%B %Y"), "space": space or "Personal", "currency": cur,
+            "spent": spent, "income": income, "count": len(exp) + len(inc),
+            "by_category": dict(sorted(by_cat.items(), key=lambda x: -x[1])),
+            "top_category": top, "biggest": biggest, "badges": badges,
+            "empty": not exp and not inc,
+        }
+
+    def _logging_streak(self, user_id: str, space: Optional[str] = None) -> int:
+        """Consecutive days up to today with at least one entry."""
+        rows = self.db.query_records(domain="finance", user_id=user_id, limit=2000, space=space)
+        days = {(r.get("timestamp", "") or "")[:10] for r in rows}
+        from datetime import timedelta
+        d = datetime.now().date()
+        streak = 0
+        while d.isoformat() in days:
+            streak += 1
+            d -= timedelta(days=1)
+        return streak
+
     def category_transactions(self, category: str, timeframe: str = "month",
                               user_id: Optional[str] = None,
                               space: Optional[str] = None) -> List[Dict[str, Any]]:
