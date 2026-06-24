@@ -625,7 +625,8 @@ async def _process_user_text(update, context, text: str, kind: str = "text",
                              insight_provider=lambda: _quick_insight(fp, user_id, space))
         await pm.start()
     try:
-        result = await asyncio.to_thread(orch.process, text, user_id)
+        # Bare amounts follow the user's home currency, not a hardcoded £.
+        result = await asyncio.to_thread(orch.process, text, user_id, fp.default_currency(user_id, space))
     except Exception:
         logger.exception("processing failed")
         await pm.fail()

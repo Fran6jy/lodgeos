@@ -197,6 +197,37 @@ class AgentOrchestrator:
         re.IGNORECASE,
     )
 
+    def _try_currency_pref(self, message: str, user_id: str, start: float):
+        """Handle "set my currency to naira" / "use ₦ by default". Returns a result
+        or None. Sets the per-user default so bare amounts follow their currency."""
+        from openclaw.utils.currency_normalizer import SYMBOL_MAP, WORD_MAP, format_amount
+        low = message.lower()
+        if "currency" not in low and not re.search(r"\b(default|by default)\b.*\b(naira|pounds?|dollars?|euros?|cedis?|rand|shillings?|rupees?)\b", low):
+            return None
+        if not re.search(r"\b(set|change|use|make|switch|prefer|default|my|to|is)\b", low):
+            return None
+        sym = re.search(r"[£$€₦]", message)
+        word = re.search(r"\b(naira|ngn|pounds?|sterling|gbp|dollars?|usd|euros?|eur|cedis?|ghs|"
+                         r"rand|zar|shillings?|kes|rupees?|inr)\b", low)
+        code3 = re.search(r"\b(gbp|usd|eur|ngn|ghs|zar|kes|inr|cad|aud|nzd|chf|sek|pln|jpy)\b", low)
+        code = None
+        if sym:
+            code = SYMBOL_MAP.get(sym.group(0))
+        elif word:
+            code = WORD_MAP.get(word.group(1)) or {"sterling": "GBP"}.get(word.group(1)) or word.group(1).upper()[:3]
+        elif code3:
+            code = code3.group(1).upper()
+        if not code:
+            return None
+        db = self._storage()
+        if db is not None:
+            db.set_currency_pref(user_id, code)
+        return self._result(
+            True, None,
+            f"✅ Default currency set to {format_amount(0, code).replace('0.00', '').strip()} {code}.\n"
+            f"Now a plain “3000” means {format_amount(3000, code)} — no need to type the currency. 👍",
+            start, domain="finance")
+
     def _route_budget(self, message: str, user_id: str, space: str, start: float):
         """Single owner of every budget-related message. Classifies into one intent
         in priority order and dispatches to the relevant executor.
@@ -672,6 +703,12 @@ class AgentOrchestrator:
                     start,
                     pending={"action": "VOID_ALL", "space": space, "count": count, "candidates": []},
                 )
+
+            # Step 0a-: Set a home currency ("set my currency to naira") so bare
+            # amounts stop defaulting to £ for non-GBP users.
+            cur_pref = self._try_currency_pref(message, user_id, start)
+            if cur_pref is not None:
+                return cur_pref
 
             # Step 0a0: Greeting / smalltalk — reply with a hint, don't record it.
             if re.fullmatch(r"(hi|hello|hey+|hiya|yo|sup|howdy|greetings|good\s*(morning|afternoon|"

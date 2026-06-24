@@ -221,6 +221,8 @@ def help_text() -> str:
         "• Got money back? <i>Refund £10 for shoes</i>\n"
         "• Many at once: <i>£10 on rice and £20 on soap</i>\n"
         "Works in any money — £, $, ₦, € … I keep each on its own.\n"
+        "💡 Tell me your everyday money once: <i>set my currency to naira</i> — "
+        "then a plain <i>3000</i> means ₦3,000 (no need to type it each time).\n"
         "I sort it into the right group and show you a tick ✅.\n\n"
 
         "<b>2️⃣ ASK ME ANYTHING</b> ❓\n"

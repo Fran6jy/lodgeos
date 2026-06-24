@@ -148,6 +148,8 @@ class SQLiteAdapter:
             conn.execute("ALTER TABLE user_prefs ADD COLUMN active_list TEXT")
         if pcols and "active_list_budget" not in pcols:
             conn.execute("ALTER TABLE user_prefs ADD COLUMN active_list_budget REAL")
+        if pcols and "currency" not in pcols:
+            conn.execute("ALTER TABLE user_prefs ADD COLUMN currency TEXT")
 
         # shopping_items gained a per-item quantity.
         scols = {row["name"] for row in conn.execute("PRAGMA table_info(shopping_items)")}
@@ -639,6 +641,19 @@ class SQLiteAdapter:
                 "INSERT INTO user_prefs (user_id, active_list_budget) VALUES (?, ?) "
                 "ON CONFLICT(user_id) DO UPDATE SET active_list_budget = excluded.active_list_budget",
                 (user_id, amount),
+            )
+
+    def get_currency_pref(self, user_id: str) -> Optional[str]:
+        with self._conn() as conn:
+            row = conn.execute("SELECT currency FROM user_prefs WHERE user_id = ?", (user_id,)).fetchone()
+        return row["currency"] if row and row["currency"] else None
+
+    def set_currency_pref(self, user_id: str, code: str) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO user_prefs (user_id, currency) VALUES (?, ?) "
+                "ON CONFLICT(user_id) DO UPDATE SET currency = excluded.currency",
+                (user_id, code),
             )
 
     def add_shopping_item(self, user_id: str, space: str, list_name: str,

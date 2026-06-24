@@ -280,6 +280,14 @@ class FinancePlugin(BasePlugin):
             lines.append(f"🎯 Budget left this month: {format_amount(rem, self._user_currency(uid, space))}")
         return "\n".join(lines)
 
+    def default_currency(self, user_id: Optional[str] = None, space: Optional[str] = None) -> str:
+        """The currency a bare amount ("3000") should mean for this user:
+        an explicit saved preference, else the one they use most, else GBP.
+        Fixes the Naira-user pain of bare numbers defaulting to £."""
+        uid = user_id or self.default_user
+        pref = self.db.get_currency_pref(uid)
+        return pref or self._user_currency(uid, space)
+
     def _user_currency(self, user_id: Optional[str] = None, space: Optional[str] = None) -> str:
         """The user's primary currency = the most common one in their records.
         Aggregates are shown in this currency (no FX conversion is performed)."""
