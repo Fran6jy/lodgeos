@@ -150,6 +150,10 @@ class SQLiteAdapter:
             conn.execute("ALTER TABLE user_prefs ADD COLUMN active_list_budget REAL")
         if pcols and "currency" not in pcols:
             conn.execute("ALTER TABLE user_prefs ADD COLUMN currency TEXT")
+        if pcols and "wrapped_enabled" not in pcols:
+            conn.execute("ALTER TABLE user_prefs ADD COLUMN wrapped_enabled INTEGER DEFAULT 0")
+        if pcols and "referred_by" not in pcols:
+            conn.execute("ALTER TABLE user_prefs ADD COLUMN referred_by TEXT")
 
         # shopping_items gained a per-item quantity.
         scols = {row["name"] for row in conn.execute("PRAGMA table_info(shopping_items)")}
@@ -572,7 +576,8 @@ class SQLiteAdapter:
     # Reminder opt-ins (daily digest / morning briefing)
     # -------------------------------------------------------------------------
 
-    _REMINDER_COLS = {"digest": "digest_enabled", "briefing": "briefing_enabled"}
+    _REMINDER_COLS = {"digest": "digest_enabled", "briefing": "briefing_enabled",
+                      "wrapped": "wrapped_enabled"}
 
     def set_reminder(self, user_id: str, kind: str, enabled: bool) -> None:
         col = self._REMINDER_COLS[kind]
@@ -586,13 +591,29 @@ class SQLiteAdapter:
     def get_reminders(self, user_id: str) -> Dict[str, bool]:
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT digest_enabled, briefing_enabled FROM user_prefs WHERE user_id = ?",
+                "SELECT digest_enabled, briefing_enabled, wrapped_enabled FROM user_prefs WHERE user_id = ?",
                 (user_id,),
             ).fetchone()
         return {
             "digest": bool(row and row["digest_enabled"]),
             "briefing": bool(row and row["briefing_enabled"]),
+            "wrapped": bool(row and row["wrapped_enabled"]),
         }
+
+    def set_referred_by(self, user_id: str, referrer: str) -> bool:
+        """Record who referred a user, once (ignored if already set or self). True if stored."""
+        if not referrer or referrer == user_id:
+            return False
+        with self._conn() as conn:
+            row = conn.execute("SELECT referred_by FROM user_prefs WHERE user_id = ?", (user_id,)).fetchone()
+            if row and row["referred_by"]:
+                return False
+            conn.execute(
+                "INSERT INTO user_prefs (user_id, referred_by) VALUES (?, ?) "
+                "ON CONFLICT(user_id) DO UPDATE SET referred_by = excluded.referred_by",
+                (user_id, referrer),
+            )
+            return True
 
     def list_reminder_users(self, kind: str) -> List[str]:
         col = self._REMINDER_COLS[kind]

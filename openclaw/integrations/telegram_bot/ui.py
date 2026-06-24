@@ -95,15 +95,18 @@ def reminders_card_and_kb(reminders: dict):
     """Toggle screen for the daily digest + morning briefing. Returns (text, kb)."""
     d = "✅" if reminders.get("digest") else "⬜️"
     b = "✅" if reminders.get("briefing") else "⬜️"
+    w = "✅" if reminders.get("wrapped") else "⬜️"
     text = card("🔔 Reminders", (
         "Get a gentle nudge so tracking becomes a habit:\n\n"
         f"{d} <b>Daily digest</b> — evening recap of today's spending\n"
-        f"{b} <b>Morning briefing</b> — yesterday + month-to-date\n\n"
-        "<i>Tap to toggle. Sent once a day at the times set by the bot host.</i>"
+        f"{b} <b>Morning briefing</b> — yesterday + month-to-date\n"
+        f"{w} <b>Monthly Wrapped</b> — a shareable recap on the 1st 🎁\n\n"
+        "<i>Tap to toggle. Sent at the times set by the bot host.</i>"
     ))
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton(f"{d} Daily digest", callback_data="rem|digest")],
         [InlineKeyboardButton(f"{b} Morning briefing", callback_data="rem|briefing")],
+        [InlineKeyboardButton(f"{w} Monthly Wrapped", callback_data="rem|wrapped")],
         [InlineKeyboardButton("⬅️ Menu", callback_data="menu|home")],
     ])
     return text, kb

@@ -101,6 +101,11 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     name = update.effective_user.first_name if update.effective_user else ""
     _, fp = _get_orchestrator()
     uid = str(update.effective_user.id)
+    # Capture a referral from a /start?ref_<id> deep link (once, for new users).
+    if context.args and context.args[0].startswith("ref_"):
+        referrer = context.args[0][4:]
+        if referrer.isdigit() and fp.db.set_referred_by(uid, referrer):
+            logger.info("Referral: user %s joined via %s", uid, referrer)
     # First-run interactive tour: only for genuinely new users (no records yet).
     if not fp.db.get_tutorial_done(uid) and not fp.db.query_records(domain="finance", user_id=uid, limit=1):
         text, kb = ui.tutorial(0)
@@ -192,25 +197,37 @@ async def _dashboard_text(fp, user_id: str) -> str:
     ))
 
 
-async def _send_wrapped(target, fp, uid: str) -> None:
-    """Render the shareable monthly recap poster and send it. `target` is a
-    message or callback-query message that supports reply_photo."""
+def _share_link(bot_username: str, uid: str) -> str:
+    """A Telegram deep link that opens the bot and attributes the referral."""
+    return f"https://t.me/{bot_username}?start=ref_{uid}" if bot_username else ""
+
+
+def _build_wrapped(fp, uid: str, bot_username: str = "", month_offset: int = 0):
+    """Return (png_bytesio, caption, recap) for the Wrapped poster."""
     import io
     from openclaw.integrations.telegram_bot import charts
     from openclaw.utils.currency_normalizer import CODE_SYMBOLS
     space = fp.db.get_active_space(uid)
-    recap = fp.monthly_recap(uid, space=space)
+    recap = fp.monthly_recap(uid, space=space, month_offset=month_offset)
     symbol = CODE_SYMBOLS.get(recap["currency"], "") or recap["currency"] + " "
     png = charts.monthly_wrapped(recap, brand=ui.BRAND, currency_symbol=symbol)
-    caption = (f"✨ <b>My {recap['label']} on {ui.BRAND}</b> — "
-               f"tracked just by talking to a bot. Get yours 👉 (tap to share)")
-    await target.reply_photo(photo=io.BytesIO(png), caption=caption, parse_mode="HTML",
-                             reply_markup=ui.back_kb())
+    caption = f"✨ <b>My {recap['label']} on {ui.BRAND}</b> — tracked just by talking to a bot."
+    link = _share_link(bot_username, uid)
+    if link:
+        caption += f"\nForward this — your friends start here 👉 {link}"
+    return io.BytesIO(png), caption, recap
+
+
+async def _send_wrapped(target, fp, uid: str, bot_username: str = "", month_offset: int = 0) -> None:
+    """Send the Wrapped poster to a message/callback target (reply_photo)."""
+    buf, caption, _ = _build_wrapped(fp, uid, bot_username, month_offset)
+    await target.reply_photo(photo=buf, caption=caption, parse_mode="HTML", reply_markup=ui.back_kb())
 
 
 async def wrapped_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _, fp = _get_orchestrator()
-    await _send_wrapped(update.message, fp, str(update.effective_user.id))
+    await _send_wrapped(update.message, fp, str(update.effective_user.id),
+                        bot_username=context.bot.username)
 
 
 async def _send_chart(q, fp, uid: str) -> None:
@@ -260,7 +277,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await _send_chart(q, fp, uid)
         return
     if action == "wrapped":
-        await _send_wrapped(q.message, fp, uid)
+        await _send_wrapped(q.message, fp, uid, bot_username=context.bot.username)
         return
     if action == "history":
         text, kb = _history_page(fp, uid, 0)
@@ -449,6 +466,20 @@ async def _send_reminder(context, kind: str, builder_name: str) -> None:
             await context.bot.send_message(int(uid), builder(uid))
         except Exception:
             logger.warning("Reminder '%s' failed for user %s", kind, uid, exc_info=True)
+
+
+async def _send_wrapped_recaps(context):
+    """Monthly job (1st): push last month's Wrapped poster to opted-in users."""
+    _, fp = _get_orchestrator()
+    username = context.bot.username
+    for uid in fp.db.list_reminder_users("wrapped"):
+        try:
+            buf, caption, recap = _build_wrapped(fp, uid, bot_username=username, month_offset=-1)
+            if recap.get("empty"):
+                continue
+            await context.bot.send_photo(int(uid), photo=buf, caption=caption, parse_mode="HTML")
+        except Exception:
+            logger.warning("Wrapped recap failed for user %s", uid, exc_info=True)
 
 
 async def _send_digests(context):
@@ -840,8 +871,11 @@ def main():
         briefing_h = int(os.environ.get("BRIEFING_HOUR", "7"))
         app.job_queue.run_daily(_send_digests, time=_dtime(hour=digest_h, minute=0))
         app.job_queue.run_daily(_send_briefings, time=_dtime(hour=briefing_h, minute=0))
-        logger.info("Scheduled daily digest @%02d:00 and briefing @%02d:00 (server time)",
-                    digest_h, briefing_h)
+        # Monthly "Wrapped" recap, 1st of the month (covers the previous month).
+        wrapped_h = int(os.environ.get("WRAPPED_HOUR", "9"))
+        app.job_queue.run_monthly(_send_wrapped_recaps, when=_dtime(hour=wrapped_h, minute=0), day=1)
+        logger.info("Scheduled daily digest @%02d:00, briefing @%02d:00, monthly Wrapped @%02d:00 day 1 (server time)",
+                    digest_h, briefing_h, wrapped_h)
     else:
         logger.warning("JobQueue unavailable — install python-telegram-bot[job-queue] to enable reminders.")
 

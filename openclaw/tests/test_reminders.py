@@ -27,7 +27,15 @@ def _ins(db, amt, desc, cat, when, user="u", cur="GBP"):
 class TestReminderOptIns:
     def test_default_off(self, db):
         r = db.get_reminders("u")
-        assert r == {"digest": False, "briefing": False}
+        assert r == {"digest": False, "briefing": False, "wrapped": False}
+
+    def test_wrapped_optin_and_referral(self, db):
+        db.set_reminder("u", "wrapped", True)
+        assert db.get_reminders("u")["wrapped"] is True
+        assert db.list_reminder_users("wrapped") == ["u"]
+        assert db.set_referred_by("u", "999") is True      # stored once
+        assert db.set_referred_by("u", "888") is False     # not overwritten
+        assert db.set_referred_by("x", "x") is False       # not self
 
     def test_toggle_and_list(self, db):
         db.set_reminder("u", "digest", True)

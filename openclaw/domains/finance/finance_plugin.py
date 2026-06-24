@@ -588,13 +588,19 @@ class FinancePlugin(BasePlugin):
 
         return "\n".join(lines)
 
-    def monthly_recap(self, user_id: Optional[str] = None, space: Optional[str] = None) -> Dict[str, Any]:
+    def monthly_recap(self, user_id: Optional[str] = None, space: Optional[str] = None,
+                      month_offset: int = 0) -> Dict[str, Any]:
         """Gather a shareable monthly recap (the 'Wrapped' card). Numbers are in
-        the user's primary currency; no balances, nothing sensitive by default."""
+        the user's primary currency; no balances, nothing sensitive by default.
+        month_offset=-1 recaps last month (used by the 1st-of-month auto-send)."""
         from collections import defaultdict
-        uid = user_id or self.default_user
         now = datetime.now()
-        s, e = current_month_range(now)
+        if month_offset < 0:
+            anchor = now.replace(day=1) - timedelta(days=1)   # last day of previous month
+        else:
+            anchor = now
+        uid = user_id or self.default_user
+        s, e = current_month_range(anchor)
         cur = self.default_currency(uid, space)
         exp = [r for r in self.db.query_records(domain="finance", record_type="expense", user_id=uid,
                                                 since=s.isoformat(), until=e.isoformat(), limit=5000, space=space)
@@ -627,7 +633,7 @@ class FinancePlugin(BasePlugin):
             badges.append(f"🧾 {len(exp) + len(inc)} logged")
 
         return {
-            "label": now.strftime("%B %Y"), "space": space or "Personal", "currency": cur,
+            "label": anchor.strftime("%B %Y"), "space": space or "Personal", "currency": cur,
             "spent": spent, "income": income, "count": len(exp) + len(inc),
             "by_category": dict(sorted(by_cat.items(), key=lambda x: -x[1])),
             "top_category": top, "biggest": biggest, "badges": badges,
