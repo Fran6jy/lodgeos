@@ -340,7 +340,10 @@ class AgentOrchestrator:
             return None
 
         from openclaw.utils.currency_normalizer import extract_amount_and_currency
-        amount, currency = extract_amount_and_currency(message, "GBP")
+        # Budgets without an explicit symbol follow the user's home currency, not £.
+        fin = self.router._registry.get("finance")
+        default_cur = fin.default_currency(user_id, space) if fin else "GBP"
+        amount, currency = extract_amount_and_currency(message, default_cur)
 
         # Category = the message stripped of amounts and budget keywords.
         cat_src = re.sub(r"[£$€₦]?\s*\d[\d,]*(?:\.\d+)?", " ", message)

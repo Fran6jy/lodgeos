@@ -106,8 +106,25 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         referrer = context.args[0][4:]
         if referrer.isdigit() and fp.db.set_referred_by(uid, referrer):
             logger.info("Referral: user %s joined via %s", uid, referrer)
+
+    is_new = not fp.db.get_tutorial_done(uid) and not fp.db.query_records(domain="finance", user_id=uid, limit=1)
+    # New users join the gentle engagement loop by default (toggle off via /reminders).
+    if is_new:
+        fp.db.set_reminder(uid, "digest", True)
+        fp.db.set_reminder(uid, "wrapped", True)
+
+    # Pin the "How to use" guide once, so it's always one tap away at the top.
+    if not fp.db.get_help_pinned(uid):
+        try:
+            msg = await update.message.reply_text(ui.help_text(), parse_mode="HTML")
+            await context.bot.pin_chat_message(update.effective_chat.id, msg.message_id,
+                                               disable_notification=True)
+            fp.db.set_help_pinned(uid)
+        except Exception:
+            logger.warning("Could not pin help for %s", uid, exc_info=True)
+
     # First-run interactive tour: only for genuinely new users (no records yet).
-    if not fp.db.get_tutorial_done(uid) and not fp.db.query_records(domain="finance", user_id=uid, limit=1):
+    if is_new:
         text, kb = ui.tutorial(0)
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
         return
@@ -297,11 +314,11 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if action == "insights":
         text = ui.card("💡 Insights", fp.spending_insights(uid, space=fp.db.get_active_space(uid)))
     elif action == "subs":
-        text = ui.card("🔁 Subscriptions", fp.detect_subscriptions(uid, space=fp.db.get_active_space(uid)), mono=True)
+        text = ui.card("🔁 Subscriptions", fp.detect_subscriptions(uid, space=fp.db.get_active_space(uid)))
     elif action == "budget":
-        text = ui.card("🎯 Budgets", fp._budget_report(uid, space=fp.db.get_active_space(uid)), mono=True)
+        text = ui.card("🎯 Budgets", fp._budget_report(uid, space=fp.db.get_active_space(uid)))
     elif action == "income":
-        text = ui.card("💰 Income", fp._income_summary(uid, space=fp.db.get_active_space(uid)), mono=True)
+        text = ui.card("💰 Income", fp._income_summary(uid, space=fp.db.get_active_space(uid)))
     elif action == "dashboard":
         text = await _dashboard_text(fp, uid)
     elif action == "add":
@@ -371,14 +388,14 @@ async def budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     _, fp = _get_orchestrator()
     uid = str(update.effective_user.id)
     text = fp._budget_report(user_id=uid, space=fp.db.get_active_space(uid))
-    await update.message.reply_text(ui.card("🎯 Budgets", text, mono=True),
+    await update.message.reply_text(ui.card("🎯 Budgets", text),
                                     parse_mode="HTML", reply_markup=ui.back_kb())
 
 
 async def income_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _, fp = _get_orchestrator()
     text = fp._income_summary(user_id=str(update.effective_user.id))
-    await update.message.reply_text(ui.card("💰 Income", text, mono=True),
+    await update.message.reply_text(ui.card("💰 Income", text),
                                     parse_mode="HTML", reply_markup=ui.back_kb())
 
 
@@ -416,7 +433,7 @@ async def subscriptions_handler(update: Update, context: ContextTypes.DEFAULT_TY
     _, fp = _get_orchestrator()
     uid = str(update.effective_user.id)
     text = fp.detect_subscriptions(uid, space=fp.db.get_active_space(uid))
-    await update.message.reply_text(ui.card("🔁 Subscriptions", text, mono=True),
+    await update.message.reply_text(ui.card("🔁 Subscriptions", text),
                                     parse_mode="HTML", reply_markup=ui.back_kb())
 
 

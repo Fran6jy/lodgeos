@@ -518,14 +518,15 @@ class FinancePlugin(BasePlugin):
         if not detected:
             return "No recurring subscriptions detected yet. I spot them once a charge repeats month-to-month."
 
+        import html
         detected.sort(key=lambda d: -d["amount"])
         monthly_total = sum(d["amount"] for d in detected if d["recurring"]) or sum(d["amount"] for d in detected)
         lines = []
         for d in detected:
-            tag = "" if d["recurring"] else "  (likely)"
-            lines.append(f"{d['name']:<24} {format_amount(d['amount'], cur):>9}{tag}")
-        lines.append("─" * 34)
-        lines.append(f"{'Est. recurring / month':<24} {format_amount(monthly_total, cur):>9}")
+            tag = "" if d["recurring"] else "  <i>(likely)</i>"
+            lines.append(f"🔁 <b>{html.escape(d['name'])}</b> — <b>{format_amount(d['amount'], cur)}</b>{tag}")
+        lines.append("")
+        lines.append(f"≈ <b>{format_amount(monthly_total, cur)}</b> / month recurring")
         return "\n".join(lines)
 
     def spending_insights(self, user_id: Optional[str] = None, space: Optional[str] = None) -> str:
@@ -763,9 +764,9 @@ class FinancePlugin(BasePlugin):
             scope = f" for {space}" if space else ""
             return f"No budgets set{scope}. Use /setbudget <category> <amount> to create one."
 
+        import html
         s, e = current_month_range()
-        scope = f" · {space}" if space else ""
-        lines = [f"📋 Monthly Budget Report{scope}", ""]
+        lines = []
         for b in sorted(budgets, key=lambda x: x["category"].lower()):
             cur = b.get("currency") or "GBP"
             # Compare spending only in the budget's own currency (no FX conversion).
@@ -776,15 +777,12 @@ class FinancePlugin(BasePlugin):
             )
             remaining = b["amount"] - spent
             pct = (spent / b["amount"] * 100) if b["amount"] > 0 else 0
-            # Each budget as a block: name + limit, a bar, then spent / remaining.
-            if remaining < 0:
-                head = f"⚠️ {b['category']} — {format_amount(b['amount'], cur)}/mo"
-                tail = f"{format_amount(spent, cur)} spent · {format_amount(-remaining, cur)} OVER"
-            else:
-                head = f"🎯 {b['category']} — {format_amount(b['amount'], cur)}/mo"
-                tail = f"{format_amount(spent, cur)} spent · {format_amount(remaining, cur)} left"
-            lines.append(head)
-            lines.append(f"   {self._bar(pct)}  {tail}")
+            name = html.escape(b["category"])
+            icon = "⚠️" if remaining < 0 else category_icon(b["category"])
+            standing = (f"<b>{format_amount(-remaining, cur)} over</b>" if remaining < 0
+                        else f"<b>{format_amount(remaining, cur)} left</b>")
+            lines.append(f"{icon} <b>{name}</b> · {format_amount(b['amount'], cur)}/mo")
+            lines.append(f"<code>{self._bar(pct)}</code>  {format_amount(spent, cur)} spent · {standing}")
             lines.append("")
         return "\n".join(lines).rstrip()
 
@@ -802,10 +800,18 @@ class FinancePlugin(BasePlugin):
             domain="finance", record_type="income",
             user_id=uid, since=s.isoformat(), until=e.isoformat(), limit=100, space=space,
         )
+        import html
         total = sum(r.get("amount", 0) or 0 for r in records)
         cur = self._user_currency(uid, space)
-        lines = [f"💰 Income this month: {format_amount(total, cur)}", ""]
+        if not records:
+            return "💰 No income logged this month yet.\nTell me when money comes in: <i>got salary 3200</i>."
+        lines = [f"💰 <b>{format_amount(total, cur)}</b> in this month", ""]
         for r in records:
-            ts = r.get("timestamp", "")[:10]
-            lines.append(f"  {ts}  {r.get('description', ''):<35} {format_amount(r.get('amount', 0), r.get('currency', cur))}")
+            ts = r.get("timestamp", "") or ""
+            try:
+                day = datetime.fromisoformat(ts).strftime("%d %b").lstrip("0")
+            except (ValueError, TypeError):
+                day = ts[:10]
+            desc = html.escape((r.get("description", "") or "")[:30])
+            lines.append(f"💰 <i>{day}</i>  <b>{format_amount(r.get('amount', 0), r.get('currency', cur))}</b> — {desc}")
         return "\n".join(lines)

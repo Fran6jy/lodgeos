@@ -126,7 +126,7 @@ def test_delete_budget_unknown_asks(orch):
 def test_show_budgets_query(orch):
     orch.process("set budget for food 100")
     r = orch.process("show me my budgets")
-    assert r.success and "Budget Report" in r.response
+    assert r.success and "Food" in r.response and "/mo" in r.response
     # not recorded as a note
     assert orch._storage().query_records(domain="finance", record_type="expense", user_id="default") == []
 
@@ -161,8 +161,8 @@ def test_budget_report_layout(orch):
     orch.process("set budget for transport 50")
     orch.process("spent 30 on bus")
     report = orch.router._registry["finance"]._budget_report("default", space="Personal")
-    assert "Transport — £50.00/mo" in report
-    assert "£30.00 spent · £20.00 left" in report
+    assert "Transport</b> · £50.00/mo" in report
+    assert "£30.00 spent · <b>£20.00 left</b>" in report
     assert "█" in report and "60%" in report     # progress bar present
 
 
@@ -170,7 +170,7 @@ def test_budget_report_over_budget(orch):
     orch.process("set budget for transport 50")
     orch.process("spent 70 on taxi")
     report = orch.router._registry["finance"]._budget_report("default", space="Personal")
-    assert "OVER" in report and "⚠️" in report
+    assert "over</b>" in report and "⚠️" in report
 
 
 def test_vague_message_nudges_not_recorded(orch):

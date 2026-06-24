@@ -154,6 +154,8 @@ class SQLiteAdapter:
             conn.execute("ALTER TABLE user_prefs ADD COLUMN wrapped_enabled INTEGER DEFAULT 0")
         if pcols and "referred_by" not in pcols:
             conn.execute("ALTER TABLE user_prefs ADD COLUMN referred_by TEXT")
+        if pcols and "help_pinned" not in pcols:
+            conn.execute("ALTER TABLE user_prefs ADD COLUMN help_pinned INTEGER DEFAULT 0")
 
         # shopping_items gained a per-item quantity.
         scols = {row["name"] for row in conn.execute("PRAGMA table_info(shopping_items)")}
@@ -599,6 +601,19 @@ class SQLiteAdapter:
             "briefing": bool(row and row["briefing_enabled"]),
             "wrapped": bool(row and row["wrapped_enabled"]),
         }
+
+    def get_help_pinned(self, user_id: str) -> bool:
+        with self._conn() as conn:
+            row = conn.execute("SELECT help_pinned FROM user_prefs WHERE user_id = ?", (user_id,)).fetchone()
+        return bool(row and row["help_pinned"])
+
+    def set_help_pinned(self, user_id: str) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO user_prefs (user_id, help_pinned) VALUES (?, 1) "
+                "ON CONFLICT(user_id) DO UPDATE SET help_pinned = 1",
+                (user_id,),
+            )
 
     def set_referred_by(self, user_id: str, referrer: str) -> bool:
         """Record who referred a user, once (ignored if already set or self). True if stored."""
