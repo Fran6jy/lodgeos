@@ -39,7 +39,7 @@ except ImportError:
 def _build_orchestrator(use_mock: bool = False):
     from openclaw.core.agent_orchestrator import AgentOrchestrator
     from openclaw.core.router import Router
-    from openclaw.domains.finance.finance_plugin import FinancePlugin
+    from openclaw.domains.finance.finance_plugin import FinancePlugin, build_llm_categoriser
     from openclaw.storage.sqlite_adapter import SQLiteAdapter
 
     from openclaw.llm.factory import build_llm_client, build_vision_client
@@ -52,6 +52,8 @@ def _build_orchestrator(use_mock: bool = False):
 
     # Chains Anthropic → OpenRouter automatically; mock bypasses both.
     llm = build_llm_client(use_mock=use_mock)
+    # Semantic category fallback for items the keyword list misses (cached).
+    finance.llm_categorize = build_llm_categoriser(llm, db)
     try:
         vision = build_vision_client(use_mock=use_mock)
     except Exception as e:

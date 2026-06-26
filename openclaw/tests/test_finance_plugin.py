@@ -162,6 +162,30 @@ class TestCategorisation:
             assert _infer_category(item) == "Utilities", item
 
 
+class TestSemanticCategoriser:
+    def test_llm_fallback_only_for_uncovered_words_and_cached(self, plugin, db):
+        from openclaw.domains.finance.finance_plugin import build_llm_categoriser
+
+        class Stub:
+            calls = 0
+            def complete(self, prompt):
+                Stub.calls += 1
+                return "Transport" if "danfo" in prompt else "Other"
+
+        stub = Stub()
+        plugin.llm_categorize = build_llm_categoriser(stub, db)
+
+        def cat(t):
+            return plugin.transform({"raw_input": t, "description": t, "entities": {}})["entities"]["category"]
+
+        assert cat("spent 100 on beans") == "Groceries"   # rule-based, no LLM
+        assert stub.calls == 0
+        assert cat("danfo 200") == "Transport"            # LLM fallback
+        assert stub.calls == 1
+        assert cat("danfo fare 300") == "Transport"       # cached → no new call
+        assert stub.calls == 1
+
+
 class TestRefunds:
     def test_refund_is_negative_expense_not_income(self, plugin, db):
         rec = {"domain": "general", "type": "income", "amount": 2.0, "currency": "GBP",

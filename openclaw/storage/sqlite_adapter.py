@@ -91,6 +91,11 @@ CREATE TABLE IF NOT EXISTS shopping_items (
     created_at  REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_shopping_list ON shopping_items(user_id, space, list_name);
+
+CREATE TABLE IF NOT EXISTS category_cache (
+    phrase    TEXT PRIMARY KEY,   -- normalised item phrase
+    category  TEXT NOT NULL
+);
 """
 
 
@@ -603,6 +608,19 @@ class SQLiteAdapter:
             "briefing": bool(row and row["briefing_enabled"]),
             "wrapped": bool(row and row["wrapped_enabled"]),
         }
+
+    def get_category_cache(self, phrase: str) -> Optional[str]:
+        with self._conn() as conn:
+            row = conn.execute("SELECT category FROM category_cache WHERE phrase = ?", (phrase,)).fetchone()
+        return row["category"] if row else None
+
+    def set_category_cache(self, phrase: str, category: str) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO category_cache (phrase, category) VALUES (?, ?) "
+                "ON CONFLICT(phrase) DO UPDATE SET category = excluded.category",
+                (phrase, category),
+            )
 
     def get_help_pinned(self, user_id: str) -> bool:
         with self._conn() as conn:

@@ -61,6 +61,59 @@ CATEGORY_ICONS = {
 }
 
 
+# Expense categories the semantic fallback may choose from (income handled elsewhere).
+CATEGORIES = ["Food & Drink", "Groceries", "Transport", "Utilities", "Shopping",
+              "Entertainment", "Marketing", "Health", "Education", "Rent", "Other"]
+
+CATEGORIZE_PROMPT = (
+    "Classify this purchase into exactly one category.\n"
+    "Purchase: \"{item}\"\n"
+    "Categories: {categories}\n"
+    "Reply with ONLY the category name, nothing else."
+)
+
+
+def build_llm_categoriser(llm, db):
+    """A semantic fallback: rule-based first, then a cached LLM call for words the
+    keyword list can't cover (jollof, shawarma, danfo …). Returns a text->category
+    callable. Never raises — degrades to 'Other' on any error."""
+    import re
+
+    def _key(text: str) -> str:
+        t = re.sub(r"[£$€₦]", " ", (text or "").lower())
+        t = re.sub(r"\b\d[\d,]*(?:\.\d+)?\b", " ", t)
+        t = re.sub(r"\b(spent|spend|paid|pay|bought|buy|on|for|the|a|an|my|of|at|got|refund|to)\b", " ", t)
+        t = re.sub(r"[^a-z ]", " ", t)
+        return " ".join(t.split())[:48]
+
+    def _match(raw: str) -> str:
+        r = (raw or "").strip().lower()
+        for c in CATEGORIES:
+            if c.lower() == r:
+                return c
+        for c in CATEGORIES:
+            if c.lower() in r or (r and r in c.lower()):
+                return c
+        return "Other"
+
+    def categorise(text: str) -> str:
+        key = _key(text)
+        if not key:
+            return "Other"
+        hit = db.get_category_cache(key)
+        if hit:
+            return hit
+        try:
+            raw = llm.complete(CATEGORIZE_PROMPT.format(item=key, categories=", ".join(CATEGORIES)))
+            cat = _match((raw or "").splitlines()[0] if raw else "")
+        except Exception:
+            return "Other"
+        db.set_category_cache(key, cat)
+        return cat
+
+    return categorise
+
+
 def category_icon(category: str) -> str:
     return CATEGORY_ICONS.get(category, "🔖")
 
@@ -92,6 +145,21 @@ class FinancePlugin(BasePlugin):
     def __init__(self, db: SQLiteAdapter, default_user: str = "default"):
         self.db = db
         self.default_user = default_user
+        # Optional semantic categoriser (set by the app) for words the keyword
+        # list can't cover. None → rule-based only (used in tests).
+        self.llm_categorize = None
+
+    def _categorise(self, text: str) -> str:
+        """Rule-based first; fall back to the cached LLM categoriser if set."""
+        cat = _infer_category(text)
+        if cat != "Other":
+            return cat
+        if self.llm_categorize:
+            try:
+                return self.llm_categorize(text) or "Other"
+            except Exception:
+                return "Other"
+        return "Other"
 
     # -------------------------------------------------------------------------
     # BasePlugin interface
@@ -121,7 +189,7 @@ class FinancePlugin(BasePlugin):
         # Infer category if not already set
         if not entities.get("category") or entities["category"] == "Other":
             text = record.get("raw_input", "") + " " + record.get("description", "")
-            entities["category"] = _infer_category(text)
+            entities["category"] = self._categorise(text)
 
         # Normalise currency
         record.setdefault("currency", "GBP")
