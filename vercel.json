@@ -1,0 +1,5 @@
+{
+  "version": 2,
+  "buildCommand": "cd landing && npm install && npm run build",
+  "outputDirectory": "landing/dist"
+}
