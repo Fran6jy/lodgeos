@@ -45,7 +45,7 @@ class TestDocumentParsing:
         r = orch.process_document("ZmFrZQ==")
         assert r.success
         assert r.record["amount"] == pytest.approx(-19.99)
-        assert "-£19.99" in r.response
+        assert "refund" in r.response.lower() and "£19.99" in r.response
 
     def test_refund_offsets_totals(self, tmp_path):
         orch = _orch(tmp_path, json.dumps({"action": "RECORD_NEW", "type": "expense", "amount": -10.0,

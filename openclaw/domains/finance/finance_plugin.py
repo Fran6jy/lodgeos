@@ -810,7 +810,15 @@ class FinancePlugin(BasePlugin):
 
         lines = []
 
-        if rtype == "expense":
+        if rtype == "expense" and (amount or 0) < 0:
+            # A refund/credit — present it as money back that reduces the category,
+            # not as a new expense, so it never looks like a stray entry.
+            back = format_amount(-amount, currency)
+            tail = f" on {category}" if category else ""
+            lines.append(f"↩️ Recorded refund: {back} back{tail} (it reduces your spend).")
+            lines.append(f"   ID: {self._transaction_id(record)}")
+
+        elif rtype == "expense":
             amt_str = format_amount(amount, currency) if amount is not None else "(no amount)"
             # Only append the merchant if the description doesn't already mention it.
             who = f" at {merchant}" if merchant and merchant.lower() not in description.lower() else ""
