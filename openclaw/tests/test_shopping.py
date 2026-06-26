@@ -192,6 +192,13 @@ class TestShoppingFlow:
         assert {i["item"] for i in _items(orch, "Malta")} == {"Plane Ticket"}
         assert {i["item"] for i in _items(orch, "Chai")} == {"Ginger"}   # untouched
 
+    def test_open_list_does_not_swallow_a_correction(self, orch):
+        orch.process("start a zobo list: hibiscus 300")
+        # A correction to a past expense must not become a list item.
+        sig = orch.shopping.handle("Actually that transport was 50", "default", "Personal")
+        assert sig is None
+        assert {i["item"] for i in _items(orch, "Zobo")} == {"Hibiscus"}
+
     def test_delete_shopping_list_with_word_shopping(self, orch):
         orch.process("start a chai list: ginger 500")
         r = orch.process("delete the chai shopping list")

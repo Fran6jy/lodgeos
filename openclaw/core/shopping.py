@@ -309,10 +309,16 @@ class ShoppingManager:
         return f"{it['item']} {format_amount(it['amount'] or 0, it['currency'])}"
 
     def _looks_like_items(self, low: str) -> bool:
-        # Has a number, and no expense/question/command verbs.
+        # Has a number, and no expense/question/command/correction verbs — so an
+        # open list never swallows an expense, a question, or a correction like
+        # "actually that transport was 50".
         if not re.search(r"\d", low):
             return False
-        if re.search(r"\b(spent|paid|received|earned|salary|how much|how many|what|delete|void|budget|switch)\b", low):
+        if re.search(r"\b(spent|paid|received|earned|salary|got|how much|how many|what|delete|void|"
+                     r"budget|switch|actually|should|meant|instead|wrong|refund|correct|undo|rename|"
+                     r"change|supposed)\b", low):
+            return False
+        if re.search(r"\bthat\b.*\bwas\b", low):   # "that transport was 50" — a correction
             return False
         return True
 
