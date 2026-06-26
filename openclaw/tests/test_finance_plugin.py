@@ -150,6 +150,18 @@ class TestMonthlyRecap:
         assert recap["empty"] is True
 
 
+class TestCategorisation:
+    def test_staple_foods_are_groceries(self):
+        from openclaw.domains.finance.finance_plugin import _infer_category
+        for item in ("rice", "beans", "milk", "chicken", "indomie", "garri"):
+            assert _infer_category(item) == "Groceries", item
+
+    def test_telecom_is_utilities(self):
+        from openclaw.domains.finance.finance_plugin import _infer_category
+        for item in ("internet", "data", "airtime"):
+            assert _infer_category(item) == "Utilities", item
+
+
 class TestRefunds:
     def test_refund_is_negative_expense_not_income(self, plugin, db):
         rec = {"domain": "general", "type": "income", "amount": 2.0, "currency": "GBP",
