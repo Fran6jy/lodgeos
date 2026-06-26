@@ -150,6 +150,16 @@ class TestMonthlyRecap:
         assert recap["empty"] is True
 
 
+class TestRefunds:
+    def test_refund_is_negative_expense_not_income(self, plugin, db):
+        rec = {"domain": "general", "type": "income", "amount": 2.0, "currency": "GBP",
+               "description": "Refund 2 for data", "raw_input": "Refund 2 for data",
+               "entities": {}, "user_id": "test_user", "space": "Personal"}
+        out = plugin.transform(rec)
+        assert out["type"] == "expense" and out["amount"] == -2.0
+        assert out["domain"] == "finance"   # shows up in finance reports/Q&A
+
+
 class TestBudgets:
     def test_set_and_get_budget(self, plugin, db):
         result = plugin.set_budget("Food & Drink", 200.0, "monthly")

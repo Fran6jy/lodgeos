@@ -101,7 +101,7 @@ class MockLLMClient:
                 cur = sym.get(m.group(1)) or wrd.get((m.group(3) or "").lower()) or None
                 pre = msg[max(0, m.start() - 30):m.start()].lower()
                 rtype = "income" if any(w in (pre + desc.lower()) for w in
-                                        ("received", "earned", "salary", "refund", "income")) else "expense"
+                                        ("received", "earned", "salary", "income")) else "expense"
                 items.append({"amount": amt, "currency": cur, "description": desc, "type": rtype})
             return json.dumps(items)
 

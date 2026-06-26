@@ -140,7 +140,8 @@ Rules:
 - One element per distinct amount. Do NOT merge amounts or sum them.
 - A currency stated once (e.g. "naira") applies to amounts that don't state their own.
 - "description" = the few words explaining that specific amount.
-- "withdrew/spent/paid/sent/bought" → expense; "received/earned/salary/refund" → income.
+- "withdrew/spent/paid/sent/bought" → expense; "received/earned/salary" → income.
+- "refund/returned/money back" → expense with a NEGATIVE amount (it offsets earlier spend), NOT income.
 
 Examples:
 "5000 for transport, 10000 for fees" -> [{{"amount":5000,"currency":null,"description":"transport","type":"expense"}},{{"amount":10000,"currency":null,"description":"fees","type":"expense"}}]

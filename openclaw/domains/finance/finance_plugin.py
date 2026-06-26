@@ -94,7 +94,18 @@ class FinancePlugin(BasePlugin):
 
     def transform(self, record: Dict[str, Any]) -> Dict[str, Any]:
         """Enrich record with inferred category and computed fields."""
+        import re
         entities = record.setdefault("entities", {})
+
+        # Refunds/returns are a NEGATIVE expense (they offset spend in their
+        # category) — never income, whatever the parser guessed.
+        text_l = (str(record.get("raw_input", "")) + " " + str(record.get("description", ""))).lower()
+        if re.search(r"\b(refund(ed)?|returned|money back|cash\s?back)\b", text_l):
+            record["type"] = "expense"
+            record["domain"] = "finance"   # a refund is a finance event, not a general note
+            amt = record.get("amount")
+            if isinstance(amt, (int, float)) and amt > 0:
+                record["amount"] = -amt
 
         # Infer category if not already set
         if not entities.get("category") or entities["category"] == "Other":
