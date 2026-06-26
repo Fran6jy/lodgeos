@@ -87,20 +87,27 @@ class ShoppingManager:
         # NB: "budget" intents (set / convert-list / trip / log-against) are owned by
         # the orchestrator's single budget router, which runs before this handler.
 
-        # Remove a single item: "remove milk from the chai list".
+        # Remove a single item: "remove milk from the chai list". Only acts on the
+        # list when the message clearly targets it — otherwise it defers so ledger
+        # deletes like "delete the 3 transport" reach the records, not the list.
         if re.search(r"\b(remove|drop|delete|take\s+off|take\s+out)\b", low):
-            name = self._name_in(message, user_id, space) or active
+            named_list = self._existing_list_in(message, user_id, space)
+            explicit = bool(named_list or re.search(r"\b(list|trip|basket|cart)\b", low))
+            name = named_list or active
             if name:
                 body = re.sub(r"\b(remove|drop|delete|take\s+off|take\s+out|from|off|out\s+of|"
                               r"shopping|price|grocery|market)\b",
                               " ", message, flags=re.IGNORECASE)
                 kw = self._clean_name(self._strip_list_ref(body, name))
                 if kw:
-                    self.db.set_active_list(user_id, name)
                     removed = self.db.delete_shopping_item(user_id, space, name, kw)
                     if removed:
+                        self.db.set_active_list(user_id, name)
                         return ("reply", self._render(user_id, space, name, header=f"➖ Removed {removed}"))
-                    return ("reply", f"I couldn’t find “{kw}” on “{name}”.")
+                    # Not on the list and the user didn't name the list → it's a
+                    # ledger delete; let the orchestrator handle it.
+                    if explicit:
+                        return ("reply", f"I couldn’t find “{kw}” on “{name}”.")
 
         # Clear / delete a list.
         if re.search(r"\b(clear|empty|delete|cancel|scrap|remove)\b.*\blist\b", low):

@@ -199,6 +199,13 @@ class TestShoppingFlow:
         assert sig is None
         assert {i["item"] for i in _items(orch, "Zobo")} == {"Hibiscus"}
 
+    def test_open_list_does_not_swallow_a_ledger_delete(self, orch):
+        orch.process("start a zobo list: hibiscus 300")
+        # "delete the 3 transport" targets expenses, not the open list → defer.
+        assert orch.shopping.handle("Delete the 3 transport", "default", "Personal") is None
+        # a real list removal (bare item that exists) still works
+        assert orch.shopping.handle("remove hibiscus", "default", "Personal")[0] == "reply"
+
     def test_delete_shopping_list_with_word_shopping(self, orch):
         orch.process("start a chai list: ginger 500")
         r = orch.process("delete the chai shopping list")
