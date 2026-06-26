@@ -182,7 +182,7 @@ class TestSemanticCategoriser:
         assert stub.calls == 0
         assert cat("danfo 200") == "Transport"            # LLM fallback
         assert stub.calls == 1
-        assert cat("danfo fare 300") == "Transport"       # cached → no new call
+        assert cat("danfo 999") == "Transport"            # same item → cached, no new call
         assert stub.calls == 1
 
 
