@@ -362,6 +362,28 @@ class FinancePlugin(BasePlugin):
             return "last_month"
         return "month"
 
+    def _sum_by_currency(self, record_type, uid, si, ui_, space,
+                         category=None, merchant=None) -> Dict[str, float]:
+        """Totals grouped by currency — currencies are NEVER summed together."""
+        from collections import defaultdict
+        recs = self.db.query_records(domain="finance", record_type=record_type, user_id=uid,
+                                     since=si, until=ui_, limit=5000, space=space)
+        d: Dict[str, float] = defaultdict(float)
+        for r in recs:
+            if category and r.get("entities", {}).get("category") != category:
+                continue
+            if merchant and merchant not in (r.get("description", "") or "").lower():
+                continue
+            d[r.get("currency", "GBP")] += (r.get("amount") or 0)
+        return {k: v for k, v in d.items() if v}
+
+    @staticmethod
+    def _fmt_multi(d: Dict[str, float], fallback_cur: str) -> str:
+        """'£118.24 · $67.00 · ₦10.00' — or a single zero if empty."""
+        if not d:
+            return format_amount(0, fallback_cur)
+        return " · ".join(format_amount(v, k) for k, v in sorted(d.items(), key=lambda x: -x[1]))
+
     def answer_question(self, question: str, user_id: Optional[str] = None,
                         space: Optional[str] = None) -> Optional[str]:
         """Answer a natural-language question about the ledger (Financial Memory).
@@ -384,8 +406,8 @@ class FinancePlugin(BasePlugin):
 
         # Income.
         if any(w in q for w in ("income", "earn", "earned", "made", "revenue", "received", "paid me")):
-            total = self.db.sum_amount("finance", "income", uid, si, ui_, space=space)
-            return f"💰 You've received {format_amount(total, cur)}{scope} {label}."
+            d = self._sum_by_currency("income", uid, si, ui_, space)
+            return f"💰 You've received {self._fmt_multi(d, cur)}{scope} {label}."
 
         # "Where does my money go" / biggest area (category distribution only).
         if any(p in q for p in ("where does my money", "where is my money", "where's my money",
@@ -402,24 +424,27 @@ class FinancePlugin(BasePlugin):
         m = re.search(r"\bat\s+([a-z][a-z0-9'&\-]{1,20})", q)
         if m and m.group(1) not in ("all", "the", "a"):
             kw = m.group(1)
-            recs = self.db.query_records(domain="finance", record_type="expense", user_id=uid,
-                                         since=si, until=ui_, limit=5000, space=space)
-            total = sum(r.get("amount", 0) or 0 for r in recs if kw in r.get("description", "").lower())
-            return f"You've spent {format_amount(total, cur)} at {kw.title()}{scope} {label}."
+            d = self._sum_by_currency("expense", uid, si, ui_, space, merchant=kw)
+            return f"You've spent {self._fmt_multi(d, cur)} at {kw.title()}{scope} {label}."
 
         # Spend on a specific category.
         cat = self._detect_category(q)
         if cat:
-            total = self.db.sum_amount("finance", "expense", uid, si, ui_, category=cat, space=space)
-            return f"You've spent {format_amount(total, cur)} on {cat}{scope} {label}."
+            d = self._sum_by_currency("expense", uid, si, ui_, space, category=cat)
+            return f"You've spent {self._fmt_multi(d, cur)} on {cat}{scope} {label}."
 
         # Default: only answer if it's clearly a spending question, else defer to LLM.
         if any(w in q for w in ("spent", "spend", "cost", "how much", "total", "budget")):
-            spent = self.db.sum_amount("finance", "expense", uid, si, ui_, space=space)
-            income = self.db.sum_amount("finance", "income", uid, si, ui_, space=space)
-            out = f"💸 You've spent {format_amount(spent, cur)}{scope} {label}."
+            spent = self._sum_by_currency("expense", uid, si, ui_, space)
+            income = self._sum_by_currency("income", uid, si, ui_, space)
+            out = f"💸 You've spent {self._fmt_multi(spent, cur)}{scope} {label}."
             if income:
-                out += f"\n💰 Received {format_amount(income, cur)} · net {format_amount(income - spent, cur)}."
+                out += f"\n💰 Received {self._fmt_multi(income, cur)}."
+                # Net only when everything is in one shared currency (no FX).
+                curs = set(spent) | set(income)
+                if len(curs) == 1:
+                    c = next(iter(curs))
+                    out += f" · net {format_amount(income.get(c, 0) - spent.get(c, 0), c)}."
             return out
         return None  # no deterministic match — caller may try the LLM planner
 
@@ -445,12 +470,17 @@ class FinancePlugin(BasePlugin):
             return recs
 
         if metric == "income_total":
-            t = self.db.sum_amount("finance", "income", uid, si, ui_, space=space)
-            return f"💰 You've received {format_amount(t, cur)}{scope} {label}."
+            d = self._sum_by_currency("income", uid, si, ui_, space)
+            return f"💰 You've received {self._fmt_multi(d, cur)}{scope} {label}."
         if metric == "net":
-            inc = self.db.sum_amount("finance", "income", uid, si, ui_, space=space)
-            sp = self.db.sum_amount("finance", "expense", uid, si, ui_, space=space)
-            return f"📊 Net{scope} {label}: {format_amount(inc - sp, cur)} (in {format_amount(inc, cur)}, out {format_amount(sp, cur)})."
+            inc = self._sum_by_currency("income", uid, si, ui_, space)
+            sp = self._sum_by_currency("expense", uid, si, ui_, space)
+            curs = set(inc) | set(sp)
+            if len(curs) <= 1:
+                c = next(iter(curs), cur)
+                return (f"📊 Net{scope} {label}: {format_amount(inc.get(c, 0) - sp.get(c, 0), c)} "
+                        f"(in {self._fmt_multi(inc, cur)}, out {self._fmt_multi(sp, cur)}).")
+            return f"📊{scope} {label}: in {self._fmt_multi(inc, cur)} · out {self._fmt_multi(sp, cur)} (currencies kept separate)."
         if metric == "count":
             n = len(_expenses())
             what = f" on {category}" if category else (f" at {merchant.title()}" if merchant else "")
@@ -470,10 +500,12 @@ class FinancePlugin(BasePlugin):
             return f"📊 By category{scope} {label}:\n" + "\n".join(lines)
 
         # spend_total (default)
-        recs = _expenses()
-        t = sum(r.get("amount", 0) or 0 for r in recs)
+        from collections import defaultdict
+        d: Dict[str, float] = defaultdict(float)
+        for r in _expenses():
+            d[r.get("currency", "GBP")] += (r.get("amount") or 0)
         what = f" on {category}" if category else (f" at {merchant.title()}" if merchant else "")
-        return f"💸 You've spent {format_amount(t, cur)}{what}{scope} {label}."
+        return f"💸 You've spent {self._fmt_multi(dict(d), cur)}{what}{scope} {label}."
 
     SUBSCRIPTION_KEYWORDS = [
         "netflix", "spotify", "microsoft", "office 365", "prime", "disney", "youtube",

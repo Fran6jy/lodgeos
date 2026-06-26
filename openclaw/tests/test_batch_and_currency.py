@@ -143,6 +143,17 @@ class TestBatchEntry:
         ans = orch.answer("how much have I spent this month?", "default")
         assert "₦" in ans and "£" not in ans
 
+    def test_qa_totals_never_sum_across_currencies(self, orch):
+        db = orch._storage()
+        now = __import__("datetime").datetime.now().isoformat()
+        for amt, c in [(100, "GBP"), (67, "USD"), (10, "NGN")]:
+            db.insert_record({"domain": "finance", "type": "expense", "amount": amt, "currency": c,
+                              "description": "x", "entities": {"category": "Other"}, "timestamp": now,
+                              "user_id": "default", "confidence": 0.9, "space": "Personal"})
+        ans = orch.answer("how much did I spend this month?", "default")
+        assert "£100.00" in ans and "$67.00" in ans and "₦10.00" in ans
+        assert "177" not in ans   # never adds 100+67+10 across currencies
+
     def test_mixed_currency_summary_is_grouped_not_summed(self, orch):
         db = orch._storage()
         now = __import__("datetime").datetime.now().isoformat()
