@@ -156,6 +156,8 @@ class SQLiteAdapter:
             conn.execute("ALTER TABLE user_prefs ADD COLUMN referred_by TEXT")
         if pcols and "help_pinned" not in pcols:
             conn.execute("ALTER TABLE user_prefs ADD COLUMN help_pinned INTEGER DEFAULT 0")
+        if pcols and "active_list_at" not in pcols:
+            conn.execute("ALTER TABLE user_prefs ADD COLUMN active_list_at REAL")
 
         # shopping_items gained a per-item quantity.
         scols = {row["name"] for row in conn.execute("PRAGMA table_info(shopping_items)")}
@@ -656,15 +658,27 @@ class SQLiteAdapter:
         return row["active_list"] if row and row["active_list"] else None
 
     def set_active_list(self, user_id: str, list_name: Optional[str]) -> None:
+        import time
+        ts = time.time() if list_name is not None else None
         with self._conn() as conn:
             conn.execute(
-                "INSERT INTO user_prefs (user_id, active_list) VALUES (?, ?) "
-                "ON CONFLICT(user_id) DO UPDATE SET active_list = excluded.active_list",
-                (user_id, list_name),
+                "INSERT INTO user_prefs (user_id, active_list, active_list_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(user_id) DO UPDATE SET active_list = excluded.active_list, "
+                "active_list_at = excluded.active_list_at",
+                (user_id, list_name, ts),
             )
             # Closing a list clears its trip budget.
             if list_name is None:
                 conn.execute("UPDATE user_prefs SET active_list_budget = NULL WHERE user_id = ?", (user_id,))
+
+    def active_list_age(self, user_id: str) -> Optional[float]:
+        """Seconds since the active list was last touched, or None if unknown."""
+        import time
+        with self._conn() as conn:
+            row = conn.execute("SELECT active_list_at FROM user_prefs WHERE user_id = ?", (user_id,)).fetchone()
+        if not row or row["active_list_at"] is None:
+            return None
+        return time.time() - row["active_list_at"]
 
     def get_active_list_budget(self, user_id: str) -> Optional[float]:
         with self._conn() as conn:

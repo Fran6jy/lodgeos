@@ -199,6 +199,19 @@ class TestShoppingFlow:
         assert sig is None
         assert {i["item"] for i in _items(orch, "Zobo")} == {"Hibiscus"}
 
+    def test_stale_list_stops_absorbing_but_stays_usable(self, orch):
+        import time
+        orch.process("start a zobo list: hibiscus 300")
+        assert orch.shopping.handle("ginger 500", "default", "Personal")[0] == "reply"  # fresh: absorbed
+        # backdate the list to make it stale (>15 min idle)
+        with orch._storage()._conn() as c:
+            c.execute("UPDATE user_prefs SET active_list_at=? WHERE user_id=?", (time.time() - 1200, "default"))
+        assert orch.shopping.handle("milk 1200", "default", "Personal") is None      # stale: defers
+        assert orch.shopping.handle("remove ginger", "default", "Personal") is None  # stale: defers
+        # but it still exists and is usable by name
+        assert orch.shopping.handle("show zobo list", "default", "Personal")[0] == "reply"
+        assert orch.shopping.handle("bought zobo", "default", "Personal")[0] == "buy"
+
     def test_open_list_does_not_swallow_a_ledger_delete(self, orch):
         orch.process("start a zobo list: hibiscus 300")
         # "delete the 3 transport" targets expenses, not the open list → defer.

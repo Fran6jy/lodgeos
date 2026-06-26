@@ -45,6 +45,8 @@ _STOP_WORDS = {
 
 
 class ShoppingManager:
+    ACTIVE_TTL = 900  # 15 min — after this, a forgotten list stops absorbing messages
+
     def __init__(self, db, currency_fn):
         self.db = db
         self.currency_fn = currency_fn  # (user_id, space) -> currency code
@@ -54,6 +56,10 @@ class ShoppingManager:
     def handle(self, message: str, user_id: str, space: str) -> Optional[Signal]:
         low = message.lower().strip()
         active = self.db.get_active_list(user_id)
+        # A list only silently absorbs bare items/edits while it's *fresh*. After
+        # ~15 min idle it still exists (act on it by name) but stops haunting.
+        age = self.db.active_list_age(user_id)
+        fresh = active if (age is None or age <= self.ACTIVE_TTL) else None
 
         # Exit / finish the open list.
         if active and re.fullmatch(r"(done|finish(ed)?|that'?s all|close( list)?|exit( list)?|stop|no more)\.?", low):
@@ -93,7 +99,7 @@ class ShoppingManager:
         if re.search(r"\b(remove|drop|delete|take\s+off|take\s+out)\b", low):
             named_list = self._existing_list_in(message, user_id, space)
             explicit = bool(named_list or re.search(r"\b(list|trip|basket|cart)\b", low))
-            name = named_list or active
+            name = named_list or fresh
             if name:
                 body = re.sub(r"\b(remove|drop|delete|take\s+off|take\s+out|from|off|out\s+of|"
                               r"shopping|price|grocery|market)\b",
@@ -151,25 +157,27 @@ class ShoppingManager:
         # (Trip budget for the open list is handled by the orchestrator's budget router.)
 
         # Adjust an item's quantity: "make ginger 2", "add 2 more ginger", "1 less milk".
-        if active:
-            edit = self._try_qty_edit(low, user_id, space, active)
+        if fresh:
+            edit = self._try_qty_edit(low, user_id, space, fresh)
             if edit:
+                self.db.set_active_list(user_id, fresh)  # keep the list alive
                 return edit
 
         # Update a price: "ginger is actually 700"
-        if active:
+        if fresh:
             um = re.search(r"\b([a-z][a-z ]+?)\s+(?:is|was|costs?|now|actually|came to)\b[^0-9]*?([£$€₦]?\d[\d,]*(?:\.\d+)?)", low)
             if um:
                 kw = self._clean_name(um.group(1))
                 amt = float(re.sub(r"[£$€₦,]", "", um.group(2)))
-                hit = self.db.update_shopping_item(user_id, space, active, kw, amt)
+                hit = self.db.update_shopping_item(user_id, space, fresh, kw, amt)
                 cur = self.currency_fn(user_id, space)
                 if hit:
-                    return ("reply", self._render(user_id, space, active, header=f"✏️ {hit} → {format_amount(amt, cur)}"))
+                    self.db.set_active_list(user_id, fresh)  # touch
+                    return ("reply", self._render(user_id, space, fresh, header=f"✏️ {hit} → {format_amount(amt, cur)}"))
 
         # Mode add: a bare item list while a list is open.
-        if active and self._looks_like_items(low):
-            return self._add(message, user_id, space, active)
+        if fresh and self._looks_like_items(low):
+            return self._add(message, user_id, space, fresh)
 
         return None
 
@@ -238,6 +246,7 @@ class ShoppingManager:
             return ("reply", "I didn’t catch an item + price. Try “ginger 500, milk 1200”.")
         for it in items:
             self.db.add_shopping_item(user_id, space, name, it["item"], it["amount"], it["currency"], it["quantity"])
+        self.db.set_active_list(user_id, name)  # keep the list fresh as you build it
         added = ", ".join(self._item_label(i) for i in items)
         return ("reply", self._render(user_id, space, name, header=f"➕ Added {added}"))
 
