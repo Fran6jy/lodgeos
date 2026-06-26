@@ -1,5 +1,6 @@
 {
   "version": 2,
+  "framework": "vite",
   "buildCommand": "cd landing && npm install && npm run build",
   "outputDirectory": "landing/dist"
 }
