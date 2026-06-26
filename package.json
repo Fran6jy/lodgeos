@@ -1,0 +1,7 @@
+{
+  "name": "lodgeos",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "cd landing && npm install && npm run build"
+  }
+}
