@@ -127,6 +127,9 @@ def test_show_budgets_query(orch):
     orch.process("set budget for food 100")
     r = orch.process("show me my budgets")
     assert r.success and "Food" in r.response and "/mo" in r.response
+    # The report is HTML (<b>/<code>) — it must be flagged so the bot sends it
+    # with parse_mode="HTML" instead of leaking raw tags into the chat.
+    assert r.html is True and "<b>" in r.response
     # not recorded as a note
     assert orch._storage().query_records(domain="finance", record_type="expense", user_id="default") == []
 

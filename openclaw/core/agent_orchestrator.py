@@ -43,6 +43,7 @@ class ProcessingResult:
         elapsed_ms: float,
         error: Optional[str] = None,
         pending: Optional[Dict[str, Any]] = None,
+        html: bool = False,
     ):
         self.success = success
         self.record = record
@@ -50,6 +51,10 @@ class ProcessingResult:
         self.domain = domain
         self.elapsed_ms = elapsed_ms
         self.error = error
+        # When True the response is pre-formatted HTML (Telegram parse_mode="HTML");
+        # otherwise it's plain text that may contain unescaped & < > and must not
+        # be sent as HTML.
+        self.html = html
         # When set, an interactive choice is required (e.g. ambiguous correction).
         # Shape: {"action": "UPDATE_EXISTING"|"DELETE_EXISTING", "updates": {...},
         #         "candidates": [{"id","description","amount","currency"}]}
@@ -290,7 +295,7 @@ class AgentOrchestrator:
             plugin = self.router._registry.get("finance")
             if plugin is not None:
                 return {"result": self._result(True, None, plugin._budget_report(user_id, space=space),
-                                               start, domain="finance")}
+                                               start, domain="finance", html=True)}
 
         # 1) Convert a price-check list into category budgets (no amount, no category).
         if has_budget and conversion and amount is None and not budget_for and not mentions_cat:
@@ -1063,12 +1068,12 @@ class AgentOrchestrator:
         return self.apply_correction(record_id=target["id"], action="UPDATE_EXISTING",
                                      updates={"currency": new_code}, user_id=user_id)
 
-    def _result(self, success, record, response, start, domain="finance", pending=None):
+    def _result(self, success, record, response, start, domain="finance", pending=None, html=False):
         elapsed = (time.perf_counter() - start) * 1000
         return ProcessingResult(
             success=success, record=record, response=response,
             domain=domain, elapsed_ms=elapsed,
-            error=None if success else response, pending=pending,
+            error=None if success else response, pending=pending, html=html,
         )
 
     def answer(self, question: str, user_id: str = "default", space: Optional[str] = None) -> str:

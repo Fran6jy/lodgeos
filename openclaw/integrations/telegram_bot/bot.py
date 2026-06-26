@@ -654,7 +654,11 @@ async def _finalise(pm, result, user_id: str, prefix: str = "") -> None:
         return
 
     if result.success:
-        await pm.finish(prefix + result.response, reply_markup=_quick_keyboard())
+        # Some responses (e.g. the budget report) are pre-formatted HTML; others
+        # are plain text that may contain unescaped & < > (echoed descriptions like
+        # "M&S") and must NOT be sent as HTML, or Telegram drops the message.
+        pmode = "HTML" if getattr(result, "html", False) else None
+        await pm.finish(prefix + result.response, reply_markup=_quick_keyboard(), parse_mode=pmode)
     else:
         # Soft replies (nudges, "which budget?", confirmations) already carry their
         # own emoji/tone — don't slap a scary ⚠️ on them. Bare/empty → default fail.

@@ -72,7 +72,7 @@ Bot handle is **`@LodgerOS_bot`** (note the "r"); brand string is **LodgeOS**.
 
 ## 9. Open items / next steps
 1. **Rotate the 3 secrets** (section 3) — highest priority.
-2. **Decide refund model** (PENDING user answer): (A) current = keep original + separate −refund record (net correct, full audit) vs (B) silently reduce the matching original entry. User was choosing A/B.
+2. ~~Decide refund model~~ **RESOLVED 2026-06-27 → (A)**: keep the original record and add a separate −refund record (net-correct, full audit trail). This is already the live, tested behavior (`FinancePlugin.transform` forces refunds to a negative finance expense; `TestRefunds`). No further work — option B (silently reducing the matching original) is rejected.
 3. **Connect Netlify** to the `landing` branch so site updates publish.
 4. **Optional:** one-message **demo pre-load** (offered, not built) to fill a ₦ month for filming.
 5. Phase-3 **property plugin**; base-currency FX; Postgres scale; Pro tier.
