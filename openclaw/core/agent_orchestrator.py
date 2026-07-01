@@ -107,6 +107,26 @@ class AgentOrchestrator:
             )
         return self._shopping
 
+    def _try_space_query(self, message: str, user_id: str, space: str, start: float):
+        """Answer utility questions like "what space am I in?" without recording."""
+        low = re.sub(r"[^a-z0-9 ]+", " ", message.lower())
+        low = re.sub(r"\s+", " ", low).strip()
+        asks_space = "space" in low and (
+            re.search(r"\b(what|which|current|active|where)\b", low)
+            or "am i in" in low
+            or "ami i in" in low
+            or "am in" in low
+        )
+        if not asks_space:
+            return None
+        db = self._storage()
+        spaces = db.list_spaces(user_id) if db else [space]
+        others = [s for s in spaces if s != space]
+        extra = "\nAvailable spaces: " + ", ".join(spaces) + "." if spaces else ""
+        if others:
+            extra += f"\nSwitch with: switch to {others[0].lower()} space."
+        return self._result(True, None, f"🗂 You are in {space}. New entries go there.{extra}", start, domain="finance")
+
     def _handle_shopping_signal(self, signal, user_id, space, start):
         kind = signal[0]
         if kind == "reply":
@@ -747,6 +767,9 @@ class AgentOrchestrator:
         try:
             # Step -1: Resolve the Budget Space (prefix override or active space).
             space, message = self._resolve_space(message, user_id)
+            space_query = self._try_space_query(message, user_id, space, start)
+            if space_query is not None:
+                return space_query
 
             # Step 0a: Bulk void ("void/delete all entries") — deterministic, and
             # always requires explicit confirmation before touching anything.

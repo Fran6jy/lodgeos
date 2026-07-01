@@ -68,6 +68,20 @@ class TestSpaceTagging:
         # prefix is stripped from the stored description/amount parse
         assert r.record["amount"] == pytest.approx(30.0)
 
+    def test_asks_current_space(self, orch):
+        orch._storage().set_active_space("default", "Business")
+        r = orch.process("what space am I in")
+        assert r.success
+        assert "Business" in r.response
+        assert r.record is None
+
+    def test_asks_current_space_with_typo(self, orch):
+        orch._storage().set_active_space("default", "Property")
+        r = orch.process("what space ami i in")
+        assert r.success
+        assert "Property" in r.response
+        assert r.record is None
+
     def test_active_space_applies_without_prefix(self, orch):
         orch._storage().set_active_space("default", "Property")
         r = orch.process("Spent £120 on a plumber")
