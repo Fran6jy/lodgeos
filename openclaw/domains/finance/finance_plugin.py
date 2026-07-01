@@ -512,6 +512,30 @@ class FinancePlugin(BasePlugin):
             f"Today: spent {self._fmt_multi(t_spent, cur)} · income {self._fmt_multi(t_income, cur)}{t_top}"
         )
 
+    def _biggest_expense_and_category(self, uid: str, si: Optional[str], ui_: Optional[str],
+                                      label: str, space: Optional[str] = None) -> str:
+        """Return top transaction plus top category for a timeframe."""
+        from collections import defaultdict
+        recs = self.db.query_records(domain="finance", record_type="expense", user_id=uid,
+                                     since=si, until=ui_, limit=5000, space=space)
+        recs = [r for r in recs if (r.get("amount") or 0) > 0]
+        scope = f" in {space}" if space else ""
+        if not recs:
+            return f"No spending recorded{scope} {label}."
+        top = max(recs, key=lambda r: r.get("amount") or 0)
+        cat_totals: Dict[tuple, float] = defaultdict(float)
+        for r in recs:
+            cur = r.get("currency", "GBP")
+            cat = r.get("entities", {}).get("category", "Other")
+            cat_totals[(cat, cur)] += r.get("amount") or 0
+        (cat, cat_cur), cat_amt = max(cat_totals.items(), key=lambda x: x[1])
+        top_cur = top.get("currency", cat_cur)
+        desc = (top.get("description") or "expense")[:40]
+        return (
+            f"💥 Biggest expense{scope} {label}: {format_amount(top.get('amount') or 0, top_cur)} — {desc}.\n"
+            f"🏆 Category hurting most: {cat} — {format_amount(cat_amt, cat_cur)} {label}."
+        )
+
     def answer_question(self, question: str, user_id: Optional[str] = None,
                         space: Optional[str] = None) -> Optional[str]:
         """Answer a natural-language question about the ledger (Financial Memory).
@@ -527,6 +551,14 @@ class FinancePlugin(BasePlugin):
 
         if "compare" in q and "yesterday" in q and "today" in q:
             return self._compare_yesterday_today(uid, space)
+
+        wants_biggest_expense = any(p in q for p in ("biggest purchase", "biggest expense", "largest",
+                                                        "most expensive", "biggest buy", "priciest", "single"))
+        wants_top_category = any(p in q for p in ("category is hurting", "category hurting", "hurting me most",
+                                                    "biggest category", "biggest area", "spend the most",
+                                                    "spend most", "money go"))
+        if wants_biggest_expense and wants_top_category:
+            return self._biggest_expense_and_category(uid, si, ui_, label, space)
 
         # Count / "biggest single purchase" → defer to the LLM query planner.
         if any(w in q for w in ("how many", "how often", "number of", " times", "count")):

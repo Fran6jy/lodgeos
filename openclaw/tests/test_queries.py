@@ -44,3 +44,12 @@ def test_income_question(plugin):
 def test_biggest_area(plugin):
     out = plugin.answer_question("Where does my money go?")
     assert "Groceries" in out
+
+def test_compound_biggest_expense_and_category(plugin):
+    out = plugin.answer_question("What was my biggest expense today and what category is hurting me most?")
+    assert "Biggest expense" in out
+    assert "Tesco shop" in out
+    assert "£67.00" in out
+    assert "Category hurting most" in out
+    assert "Groceries" in out
+    assert "£97.00" in out
