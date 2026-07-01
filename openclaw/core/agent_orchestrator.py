@@ -550,33 +550,61 @@ class AgentOrchestrator:
         lines = [l for l in message.splitlines() if re.search(r"\d", l)]
         if "\n" in message and len(lines) >= 2:
             return True
-        return len(self._MONEY_RE.findall(message)) >= 2
+        if len(self._MONEY_RE.findall(message)) >= 2:
+            return True
 
-    def _extract_line_items_rule(self, message: str, default_currency: str) -> list:
-        """Deterministically split "10£ on rice and 20£ on food" into transactions.
-
-        Handles the common "<amount> on/for <thing>" pattern repeated with
-        and/comma separators. Returns [] when it doesn't clearly match, so the
-        LLM splitter can take over."""
-        from openclaw.utils.currency_normalizer import SYMBOL_MAP, WORD_MAP
-        cur_word = r"(?:naira|pounds?|dollars?|euros?|gbp|usd|ngn|eur)"
-        # Amount with a leading OR trailing symbol/word: "£10", "10£", "10 naira".
-        pat = re.compile(
-            rf"([£$€₦])?\s*(\d[\d,]*(?:\.\d+)?)\s*([£$€₦])?\s*({cur_word})?\s+(?:on|for)\s+"
-            rf"(.+?)(?=\s+(?:and|,|;|plus)\s+[£$€₦]?\s*\d|\s*[,;]|$)",
+        # Voice transcripts often drop currency words: "30 on fuel, 12 on internet
+        # and like 7 on snacks". Treat repeated amount-led purchase/refund phrases
+        # as multi-item, but leave a single plain amount alone for ambiguity checks.
+        bare_item = re.compile(
+            r"\b(?:like\s+|about\s+|around\s+|a\s+|an\s+|another\s+)?"
+            r"\d[\d,]*(?:\.\d+)?\s+"
+            r"(?:on|for|at|to|from|refund(?:ed)?|returned?|money\s+back|cash\s?back)\b",
             re.IGNORECASE,
         )
+        return len(bare_item.findall(message)) >= 2
+
+    def _extract_line_items_rule(self, message: str, default_currency: str) -> list:
+        """Deterministically split repeated amount-led phrases into transactions.
+
+        Handles common speech/text forms such as "10£ on rice and 20£ on food",
+        "30 on fuel, 12 on internet and like 7 on snacks", and mixed refund
+        messages like "10 for groceries and a 5 refund from the pharmacy".
+        Returns [] when it doesn't clearly match, so the LLM splitter can take over.
+        """
+        from openclaw.utils.currency_normalizer import SYMBOL_MAP, WORD_MAP
+
+        cur_word = r"(?:naira|pounds?|dollars?|euros?|gbp|usd|ngn|eur)"
+        amount = rf"([£$€₦])?\s*(\d[\d,]*(?:\.\d+)?)\s*([£$€₦])?\s*({cur_word})?"
+        relation = (
+            r"(?:(refund(?:ed)?|returned?|money\s+back|cash\s?back)\s*(?:from|for|on|at)?"
+            r"|(?:on|for|at|to|from))"
+        )
+        next_amount = rf"\s+(?:and|,|;|plus|then|also)\s+(?:like\s+|about\s+|around\s+|a\s+|an\s+|another\s+)?[£$€₦]?\s*\d"
+        pat = re.compile(
+            rf"(?:\b(?:spent|spend|paid|pay|bought|buy|add|added|got|received|sent|withdrew)\s+)?"
+            rf"(?:like\s+|about\s+|around\s+|a\s+|an\s+|another\s+)?"
+            rf"{amount}\s+{relation}\s+(.+?)(?={next_amount}|\s*[,;]|$)",
+            re.IGNORECASE,
+        )
+
         income = bool(re.search(r"\b(received|earned|got paid|income|salary|made)\b", message, re.IGNORECASE))
         items = []
         for m in pat.finditer(message):
             amt = float(m.group(2).replace(",", ""))
             cur = (SYMBOL_MAP.get(m.group(1) or "") or SYMBOL_MAP.get(m.group(3) or "")
                    or WORD_MAP.get((m.group(4) or "").lower()) or default_currency)
-            desc = re.sub(r"\bthe\b", " ", m.group(5), flags=re.IGNORECASE).strip(" .")
+            is_refund = bool(m.group(5))
+            desc = m.group(6)
+            desc = re.sub(r"\b(the|a|an|my|budget)\b", " ", desc, flags=re.IGNORECASE)
+            desc = re.sub(r"\s+", " ", desc).strip(" .")
+            if is_refund and amt > 0:
+                amt = -amt
             items.append({
-                "amount": amt, "currency": cur,
-                "description": desc[:80] or "entry",
-                "type": "income" if income else "expense",
+                "amount": amt,
+                "currency": cur,
+                "description": desc[:80] or ("refund" if is_refund else "entry"),
+                "type": "expense" if is_refund else ("income" if income else "expense"),
             })
         if len(items) >= 2:
             return items
@@ -675,7 +703,11 @@ class AgentOrchestrator:
             if rec.get("type") == "expense":
                 totals[cur] += amt
             cat = rec.get("entities", {}).get("category", "")
-            lines_out.append(f"✅ {format_amount(amt, cur)} — {rec.get('description', '')[:38]} ({cat})")
+            desc = rec.get('description', '')[:38]
+            if rec.get("type") == "expense" and amt < 0:
+                lines_out.append(f"↩️ Refund {format_amount(-amt, cur)} — {desc} ({cat})")
+            else:
+                lines_out.append(f"✅ {format_amount(amt, cur)} — {desc} ({cat})")
         if any(totals.values()):
             lines_out.append("💸 Total spent: " + " · ".join(format_amount(v, k) for k, v in totals.items() if v))
         if space and space != "Personal":
@@ -755,7 +787,8 @@ class AgentOrchestrator:
                 # defer to the LLM splitter, which handles messy multi-line paragraphs.
                 if "\n" not in message:
                     rule = self._extract_line_items_rule(message, default_currency)
-                    if len(rule) == len(self._MONEY_RE.findall(message)):
+                    money_count = len(self._MONEY_RE.findall(message))
+                    if len(rule) >= 2 and (money_count == 0 or len(rule) == money_count):
                         items = rule
                 if len(items) < 2:
                     items = self._extract_line_items(message, default_currency)

@@ -78,6 +78,29 @@ class TestBatchEntry:
         assert by_amt[10.0]["currency"] == "GBP"
         assert by_amt[20.0]["entities"]["category"] == "Food & Drink"
 
+    def test_single_line_bare_amounts_split_by_category(self, orch):
+        # Screenshot regression: bare voice amounts should not collapse into
+        # one Food & Drink record when each phrase names a different thing.
+        r = orch.process("Spent 30 on fuel, 12 on internet and like 7 on snacks")
+        assert r.success
+        recs = orch._storage().query_records(domain="finance", record_type="expense", user_id="default", limit=10)
+        assert len(recs) == 3
+        by_amt = {rec["amount"]: rec for rec in recs}
+        assert by_amt[30.0]["entities"]["category"] == "Transport"
+        assert by_amt[12.0]["entities"]["category"] == "Utilities"
+        assert by_amt[7.0]["entities"]["category"] == "Food & Drink"
+
+    def test_single_line_expense_and_refund_split(self, orch):
+        # Screenshot regression: do not attach the first amount to the later
+        # refund; record the positive spend and the separate negative refund.
+        r = orch.process("Add 10 for groceries and a 5 refund from the pharmacy.")
+        assert r.success
+        recs = orch._storage().query_records(domain="finance", record_type="expense", user_id="default", limit=10)
+        assert len(recs) == 2
+        by_amt = {rec["amount"]: rec for rec in recs}
+        assert by_amt[10.0]["entities"]["category"] == "Groceries"
+        assert by_amt[-5.0]["entities"]["category"] == "Health"
+
     def test_ambiguous_spoken_amount_asks(self, orch):
         # "eight ten" → offer £8.10 or £810 instead of guessing.
         r = orch.process("spent eight ten on coffee")
