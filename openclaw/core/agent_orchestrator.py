@@ -568,43 +568,56 @@ class AgentOrchestrator:
         """Deterministically split repeated amount-led phrases into transactions.
 
         Handles common speech/text forms such as "10£ on rice and 20£ on food",
-        "30 on fuel, 12 on internet and like 7 on snacks", and mixed refund
-        messages like "10 for groceries and a 5 refund from the pharmacy".
-        Returns [] when it doesn't clearly match, so the LLM splitter can take over.
+        "42 came in from Ada", and mixed refund messages like "paid 6 on canva
+        and refund 3.5 to Musa". Returns [] when it doesn't clearly match, so
+        the LLM splitter can take over.
         """
         from openclaw.utils.currency_normalizer import SYMBOL_MAP, WORD_MAP
 
         cur_word = r"(?:naira|pounds?|dollars?|euros?|gbp|usd|ngn|eur)"
-        amount = rf"([£$€₦])?\s*(\d[\d,]*(?:\.\d+)?)\s*([£$€₦])?\s*({cur_word})?"
-        relation = (
-            r"(?:(refund(?:ed)?|returned?|money\s+back|cash\s?back)\s*(?:from|for|on|at)?"
-            r"|(?:on|for|at|to|from))"
+        next_item = (
+            r"\s+(?:and|,|;|plus|then|also)\s+"
+            r"(?:yesterday\s+|today\s+)?"
+            r"(?:spent|spend|paid|pay|bought|buy|add|added|got|received|earned|made|sent|withdrew|refund(?:ed)?)?\s*"
+            r"(?:like\s+|about\s+|around\s+|a\s+|an\s+|another\s+)?[£$€₦]?\s*\d"
         )
-        next_amount = rf"\s+(?:and|,|;|plus|then|also)\s+(?:like\s+|about\s+|around\s+|a\s+|an\s+|another\s+)?[£$€₦]?\s*\d"
         pat = re.compile(
-            rf"(?:\b(?:spent|spend|paid|pay|bought|buy|add|added|got|received|sent|withdrew)\s+)?"
+            rf"(?:(?P<day>yesterday|today)\s+)?"
+            rf"(?:(?P<verb>spent|spend|paid|pay|bought|buy|add|added|got|received|earned|made|sent|withdrew|refund(?:ed)?)\s+)?"
             rf"(?:like\s+|about\s+|around\s+|a\s+|an\s+|another\s+)?"
-            rf"{amount}\s+{relation}\s+(.+?)(?={next_amount}|\s*[,;]|$)",
+            rf"(?P<sym1>[£$€₦])?\s*(?P<amt>\d[\d,]*(?:\.\d+)?)\s*(?P<sym2>[£$€₦])?\s*(?P<cur>{cur_word})?\s+"
+            rf"(?P<rel>came\s+in\s+from|came\s+in|came\s+from|refund(?:ed)?\s*(?:to|from|for|on|at)?|returned?\s*(?:to|from|for|on|at)?|money\s+back\s*(?:from|for)?|cash\s?back\s*(?:from|for)?|on|for|at|to|from)\s+"
+            rf"(?P<desc>.+?)(?={next_item}|\s*[,;]|$)",
             re.IGNORECASE,
         )
 
-        income = bool(re.search(r"\b(received|earned|got paid|income|salary|made)\b", message, re.IGNORECASE))
         items = []
+        current_day_offset = None
         for m in pat.finditer(message):
-            amt = float(m.group(2).replace(",", ""))
-            cur = (SYMBOL_MAP.get(m.group(1) or "") or SYMBOL_MAP.get(m.group(3) or "")
-                   or WORD_MAP.get((m.group(4) or "").lower()) or default_currency)
-            is_refund = bool(m.group(5))
-            desc = m.group(6)
+            amt = float(m.group("amt").replace(",", ""))
+            cur = (SYMBOL_MAP.get(m.group("sym1") or "") or SYMBOL_MAP.get(m.group("sym2") or "")
+                   or WORD_MAP.get((m.group("cur") or "").lower()) or default_currency)
+            verb = (m.group("verb") or "").lower()
+            rel = re.sub(r"\s+", " ", (m.group("rel") or "").lower()).strip()
+            is_refund = bool(re.search(r"\b(refund|returned?|money back|cash\s?back)\b", f"{verb} {rel}"))
+            is_income = bool(re.search(r"\b(received|earned|made|got)\b", verb) or "came in" in rel or "came from" in rel)
+            desc = m.group("desc")
             desc = re.sub(r"\b(the|a|an|my|budget)\b", " ", desc, flags=re.IGNORECASE)
             desc = re.sub(r"\s+", " ", desc).strip(" .")
             if is_refund and amt > 0:
                 amt = -amt
+            day = (m.group("day") or "").lower()
+            if day == "yesterday":
+                current_day_offset = -1
+            elif day == "today":
+                current_day_offset = 0
+            day_offset = current_day_offset
             items.append({
                 "amount": amt,
                 "currency": cur,
                 "description": desc[:80] or ("refund" if is_refund else "entry"),
-                "type": "expense" if is_refund else ("income" if income else "expense"),
+                "type": "expense" if is_refund else ("income" if is_income else "expense"),
+                "day_offset": day_offset,
             })
         if len(items) >= 2:
             return items
@@ -625,7 +638,7 @@ class AgentOrchestrator:
                 cur = (SYMBOL_MAP.get(m.group(1) or "") or SYMBOL_MAP.get(m.group(3) or "")
                        or WORD_MAP.get((m.group(4) or "").lower()) or default_currency)
                 bare.append({"amount": float(m.group(2).replace(",", "")), "currency": cur,
-                             "description": "entry", "type": "income" if income else "expense"})
+                             "description": "entry", "type": "expense"})
             if len(bare) >= 2:
                 return bare
         return []
@@ -680,12 +693,16 @@ class AgentOrchestrator:
             desc = it["description"]
             if desc in ("", "entry") and forced_category:
                 desc = forced_category
+            ts = datetime.now()
+            if it.get("day_offset") is not None:
+                from datetime import timedelta
+                ts = ts + timedelta(days=it["day_offset"])
             rec = {
                 "domain": "finance", "type": it["type"], "amount": it["amount"],
                 "currency": it["currency"], "description": desc,
                 "entities": {"category": forced_category} if forced_category else {},
                 "raw_input": desc, "confidence": 0.8,
-                "user_id": user_id, "space": space, "timestamp": datetime.now().isoformat(),
+                "user_id": user_id, "space": space, "timestamp": ts.isoformat(),
             }
             plugin, domain = self.router.route(rec)
             rec["domain"] = domain
@@ -706,6 +723,8 @@ class AgentOrchestrator:
             desc = rec.get('description', '')[:38]
             if rec.get("type") == "expense" and amt < 0:
                 lines_out.append(f"↩️ Refund {format_amount(-amt, cur)} — {desc} ({cat})")
+            elif rec.get("type") == "income":
+                lines_out.append(f"💰 Income {format_amount(amt, cur)} — {desc} ({cat})")
             else:
                 lines_out.append(f"✅ {format_amount(amt, cur)} — {desc} ({cat})")
         if any(totals.values()):
@@ -807,6 +826,19 @@ class AgentOrchestrator:
             cur_fix = self._try_currency_correction(message, user_id, space, start)
             if cur_fix is not None:
                 return cur_fix
+
+            # Step 0q: Deterministic finance questions that look like plain text,
+            # not new records. This keeps demo-grade questions from becoming notes.
+            qlow = message.lower().strip()
+            if re.search(r"\b(compare|vs|versus)\b", qlow) and re.search(r"\b(today|yesterday|week|month)\b", qlow):
+                query_space = space
+                if re.search(r"\bbusiness\b", qlow):
+                    query_space = "Business"
+                elif re.search(r"\bproperty\b", qlow):
+                    query_space = "Property"
+                elif re.search(r"\bpersonal\b", qlow):
+                    query_space = "Personal"
+                return self._result(True, None, self.answer(message, user_id, space=query_space), start, domain="finance")
 
             # Step 0: Is this a correction to an existing entry, or a new one?
             classification = self.corrector.classify(message, self.memory.recent(domain="finance"))

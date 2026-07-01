@@ -43,7 +43,7 @@ CATEGORY_KEYWORDS = {
                   "crayfish", "stockfish", "seasoning", "maggi", "tin tomato"],
     "Shopping": ["amazon", "shop", "store", "clothes", "clothing", "ikea", "argos"],
     "Entertainment": ["cinema", "netflix", "spotify", "game", "ticket", "tickets", "theatre", "concert", "gym", "sport", "sports", "subscription"],
-    "Marketing": ["marketing", "advertising", "advert", "adverts", "ads", "facebook ads", "fb ads", "google ads", "instagram ads", "tiktok ads", "linkedin ads", "adwords", "sponsored", "campaign", "promotion"],
+    "Marketing": ["marketing", "advertising", "advert", "adverts", "ads", "facebook ads", "fb ads", "google ads", "instagram ads", "tiktok ads", "linkedin ads", "adwords", "canva", "sponsored", "campaign", "promotion"],
     "Health": ["doctor", "pharmacy", "medication", "dentist", "optician", "hospital", "prescription"],
     "Education": ["course", "book", "tuition", "school", "university", "training", "udemy", "study"],
     "Rent": ["rent", "landlord", "lease"],
@@ -474,6 +474,44 @@ class FinancePlugin(BasePlugin):
             return format_amount(0, fallback_cur)
         return " · ".join(format_amount(v, k) for k, v in sorted(d.items(), key=lambda x: -x[1]))
 
+    def _compare_yesterday_today(self, uid: str, space: Optional[str] = None) -> str:
+        """Compare yesterday and today by income/spend, grouped per currency."""
+        from collections import defaultdict
+        now = datetime.now()
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        yesterday_start = today_start - timedelta(days=1)
+
+        def _totals(start, end):
+            rows = self.db.query_records(domain="finance", user_id=uid, since=start.isoformat(),
+                                         until=end.isoformat(), limit=5000, space=space)
+            spent: Dict[str, float] = defaultdict(float)
+            income: Dict[str, float] = defaultdict(float)
+            cats: Dict[tuple, float] = defaultdict(float)
+            for r in rows:
+                cur = r.get("currency", "GBP")
+                amt = r.get("amount") or 0
+                if r.get("type") == "income":
+                    income[cur] += amt
+                elif r.get("type") == "expense":
+                    spent[cur] += amt
+                    cats[(r.get("entities", {}).get("category", "Other"), cur)] += amt
+            top = max(cats.items(), key=lambda x: x[1], default=None)
+            top_text = ""
+            if top:
+                (cat, cur), amt = top
+                top_text = f" · top: {cat} {format_amount(amt, cur)}"
+            return dict(spent), dict(income), top_text
+
+        y_spent, y_income, y_top = _totals(yesterday_start, today_start)
+        t_spent, t_income, t_top = _totals(today_start, now)
+        cur = self._user_currency(uid, space)
+        scope = f" · {space}" if space else ""
+        return (
+            f"📊 Yesterday vs Today{scope}\n"
+            f"Yesterday: spent {self._fmt_multi(y_spent, cur)} · income {self._fmt_multi(y_income, cur)}{y_top}\n"
+            f"Today: spent {self._fmt_multi(t_spent, cur)} · income {self._fmt_multi(t_income, cur)}{t_top}"
+        )
+
     def answer_question(self, question: str, user_id: Optional[str] = None,
                         space: Optional[str] = None) -> Optional[str]:
         """Answer a natural-language question about the ledger (Financial Memory).
@@ -486,6 +524,9 @@ class FinancePlugin(BasePlugin):
         si, ui_, label = self._timeframe_range(self._detect_timeframe(q))
         scope = f" in {space}" if space else ""
         cur = self._user_currency(uid, space)
+
+        if "compare" in q and "yesterday" in q and "today" in q:
+            return self._compare_yesterday_today(uid, space)
 
         # Count / "biggest single purchase" → defer to the LLM query planner.
         if any(w in q for w in ("how many", "how often", "number of", " times", "count")):

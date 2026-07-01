@@ -101,6 +101,34 @@ class TestBatchEntry:
         assert by_amt[10.0]["entities"]["category"] == "Groceries"
         assert by_amt[-5.0]["entities"]["category"] == "Health"
 
+    def test_business_stress_message_records_income_and_refund(self, orch):
+        r = orch.process(
+            "Business: yesterday paid 100 for fb ads, 7.5 for dispatch fuel, "
+            "42 came in from ADA for landing page work, today paid 6 on canva "
+            "and refund 3.5 to Musa for overpayment"
+        )
+        assert r.success
+        recs = orch._storage().query_records(domain="finance", user_id="default", limit=10, space="Business")
+        assert len(recs) == 5
+        by_amt = {rec["amount"]: rec for rec in recs}
+        assert by_amt[100.0]["type"] == "expense"
+        assert by_amt[100.0]["entities"]["category"] == "Marketing"
+        assert by_amt[7.5]["entities"]["category"] == "Transport"
+        assert by_amt[42.0]["type"] == "income"
+        assert by_amt[6.0]["entities"]["category"] == "Marketing"
+        assert by_amt[-3.5]["type"] == "expense"
+        assert "Refund £3.50" in r.response
+
+    def test_compare_yesterday_and_today_by_space(self, orch):
+        orch.process("Business: yesterday paid 100 for fb ads, today paid 6 on canva")
+        r = orch.process("Compare yesterday and today for business")
+        assert r.success
+        assert "Yesterday" in r.response
+        assert "Today" in r.response
+        assert "Business" in r.response
+        assert "£100.00" in r.response
+        assert "£6.00" in r.response
+
     def test_ambiguous_spoken_amount_asks(self, orch):
         # "eight ten" → offer £8.10 or £810 instead of guessing.
         r = orch.process("spent eight ten on coffee")
